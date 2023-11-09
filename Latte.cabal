@@ -1,0 +1,44 @@
+cabal-version:      2.4
+name:               Instant
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+-- synopsis:
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+license:            NONE
+author:             Kapiszon2343
+maintainer:         harasimowiczk@wp.pl
+
+-- A copyright notice.
+-- copyright:
+-- category:
+extra-source-files: CHANGELOG.md
+
+executable insc_jvm
+    main-is:          Insc_jvm.hs
+
+    -- Modules included in this executable, other than Main.
+    other-modules: Instant.Abs, Instant.Lex, Instant.Par, Instant.Print, Instant.Skel, Jasmin, RunJasmin, Common
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base, array, mtl, containers, process, filepath, bytestring
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+executable insc_llvm
+    main-is:          Insc_llvm.hs
+
+    -- Modules included in this executable, other than Main.
+    other-modules: Instant.Abs, Instant.Lex, Instant.Par, Instant.Print, Instant.Skel, Llvm, RunLlvm, Common
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base, array, mtl, containers, process, filepath, bytestring
+    hs-source-dirs:   src
+    default-language: Haskell2010

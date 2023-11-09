@@ -1,0 +1,20 @@
+{
+    "cSpell.words": [
+        "alloca",
+        "Ljava",
+        "sdiv",
+        "taload",
+        "tbipush",
+        "tgetstatic",
+        "tiadd",
+        "ticonst",
+        "tidiv",
+        "tiload",
+        "timul",
+        "tinvokespecial",
+        "tinvokevirtual",
+        "tistore",
+        "tisub",
+        "tsipush"
+    ]
+}
