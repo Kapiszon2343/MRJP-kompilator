@@ -2,7 +2,7 @@ module Common where
 
 import Data.Map
 
-import Instant.Abs
+import Latte.Abs
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
