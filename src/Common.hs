@@ -17,13 +17,13 @@ identStr :: Ident -> String
 identStr (Ident str) = str
 
 data StringBuilder 
-    = Str String
-    | Lst [StringBuilder]
+    = BStr String
+    | BLst [StringBuilder]
 
 addString :: String -> StringBuilder -> String
-addString baseStr (Str str) = str ++ baseStr
-addString baseStr (Lst []) = baseStr
-addString baseStr (Lst (builder:lst)) = addString (addString baseStr (Lst lst)) builder
+addString baseStr (BStr str) = str ++ baseStr
+addString baseStr (BLst []) = baseStr
+addString baseStr (BLst (builder:lst)) = addString (addString baseStr (BLst lst)) builder
 
 buildString :: StringBuilder -> String
 buildString = addString ""

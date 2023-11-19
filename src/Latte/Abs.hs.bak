@@ -26,7 +26,6 @@ type TopDef = TopDef' BNFC'Position
 data TopDef' a
     = FnDef a (Type' a) Ident [Arg' a] (Block' a)
     | ClassDef a Ident [ClassElem' a]
-    | ClassExt a Ident Ident [ClassElem' a]
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Arg = Arg' BNFC'Position
@@ -64,16 +63,12 @@ data Item' a = NoInit a Ident | Init a Ident (Expr' a)
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Var = Var' BNFC'Position
-data Var' a
-    = IdentVar a Ident
-    | ArrayVar a (Var' a) (Expr' a)
-    | AttrVar a (Var' a) Ident
+data Var' a = IdentVar a Ident | ArrayVar a (Var' a) (Expr' a)
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Type = Type' BNFC'Position
 data Type' a
     = Class a Ident
-    | Array a (Type' a)
     | Int a
     | Str a
     | Bool a
@@ -81,18 +76,13 @@ data Type' a
     | Fun a (Type' a) [Type' a]
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
-type New = New' BNFC'Position
-data New' a = NewBase a (Type' a) | NewArray a (New' a) (Expr' a)
-  deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
-
 type Expr = Expr' BNFC'Position
 data Expr' a
-    = ENew a (New' a)
-    | EVar a (Var' a)
+    = EVar a (Var' a)
     | ELitInt a Integer
     | ELitTrue a
     | ELitFalse a
-    | EApp a (Var' a) [Expr' a]
+    | EApp a Ident [Expr' a]
     | EString a String
     | Neg a (Expr' a)
     | Not a (Expr' a)
@@ -141,7 +131,6 @@ instance HasPosition TopDef where
   hasPosition = \case
     FnDef p _ _ _ _ -> p
     ClassDef p _ _ -> p
-    ClassExt p _ _ _ -> p
 
 instance HasPosition Arg where
   hasPosition = \case
@@ -180,26 +169,18 @@ instance HasPosition Var where
   hasPosition = \case
     IdentVar p _ -> p
     ArrayVar p _ _ -> p
-    AttrVar p _ _ -> p
 
 instance HasPosition Type where
   hasPosition = \case
     Class p _ -> p
-    Array p _ -> p
     Int p -> p
     Str p -> p
     Bool p -> p
     Void p -> p
     Fun p _ _ -> p
 
-instance HasPosition New where
-  hasPosition = \case
-    NewBase p _ -> p
-    NewArray p _ _ -> p
-
 instance HasPosition Expr where
   hasPosition = \case
-    ENew p _ -> p
     EVar p _ -> p
     ELitInt p _ -> p
     ELitTrue p -> p

@@ -43,49 +43,8 @@ getIdentLoc :: BNFC'Position -> Ident -> InterpreterMonad Loc
 getIdentLoc pos ident = do
     getLoc pos ident
 
-eval :: Exp -> InterpreterMonad (StringBuilder, String)
-eval (ExpLit _pos val) = do
-    return (Str "", show val)
-eval (ExpVar pos ident) = do
-    loc <- getIdentLoc pos ident
-    resIdent <- nextIdent
-    return (Str $ "\t" ++ resIdent ++ " = load i32, i32* %" ++ identStr ident ++ "\n", resIdent)
-eval (ExpMul _pos exp1 exp2) = do
-    (code1, expIdent1) <- eval exp1
-    (code2, expIdent2) <- eval exp2
-    resIdent <- nextIdent
-    return (Lst [
-        code1,
-        code2, 
-        Str $ "\t" ++ resIdent ++ " = mul i32 " ++ expIdent1 ++ ", " ++ expIdent2 ++ "\n"], 
-        resIdent)
-eval (ExpDiv _pos exp1 exp2) = do
-    (code1, expIdent1) <- eval exp1
-    (code2, expIdent2) <- eval exp2
-    resIdent <- nextIdent
-    return (Lst [
-        code1,
-        code2, 
-        Str $ "\t" ++ resIdent ++ " = sdiv i32 " ++ expIdent1 ++ ", " ++ expIdent2 ++ "\n"], 
-        resIdent)
-eval (ExpAdd _pos exp1 exp2) = do
-    (code1, expIdent1) <- eval exp1
-    (code2, expIdent2) <- eval exp2
-    resIdent <- nextIdent
-    return (Lst [
-        code1, 
-        code2, 
-        Str $ "\t" ++ resIdent ++ " = add i32 " ++ expIdent1 ++ ", " ++ expIdent2 ++ "\n"], 
-        resIdent)
-eval (ExpSub _pos exp1 exp2) = do
-    (code1, expIdent1) <- eval exp1
-    (code2, expIdent2) <- eval exp2
-    resIdent <- nextIdent
-    return (Lst [
-        code1,
-        code2,
-        Str $ "\t" ++ resIdent ++ " = sub i32 " ++ expIdent1 ++ ", " ++ expIdent2 ++ "\n"], 
-        resIdent)
+eval :: Expr -> InterpreterMonad (StringBuilder, String)
+
 
 runTopDefs :: StringBuilder -> [Stmt] -> InterpreterMonad StringBuilder
 runTopDefs code ((SAss pos ident exp):lst) = do
