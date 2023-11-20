@@ -43,42 +43,45 @@ getIdentLoc :: BNFC'Position -> Ident -> InterpreterMonad Loc
 getIdentLoc pos ident = do
     getLoc pos ident
 
-eval :: Expr -> InterpreterMonad (StringBuilder, String)
+compileExpr :: Expr -> InterpreterMonad StringBuilder
+compileExpr (ENew pos newVar) = throwError "unimplemented"
+compileExpr (EVar pos var) = throwError "unimplemented"
+compileExpr (ELitInt pos n) = throwError "unimplemented"
+compileExpr (ELitTrue a) = throwError "unimplemented"
+compileExpr (ELitFalse a) = throwError "unimplemented"
+compileExpr (EApp pos var exprs) = throwError "unimplemented"
+compileExpr (EString pos str) = throwError "unimplemented"
+compileExpr (Neg pos expr) = throwError "unimplemented"
+compileExpr (Not pos expr) = throwError "unimplemented"
+compileExpr (EMul pos expr0 op expr1) = throwError "unimplemented"
+compileExpr (EAdd pos expr0 op expr1) = throwError "unimplemented"
+compileExpr (ERel pos expr0 op expr1) = throwError "unimplemented"
+compileExpr (EAnd pos expr0 expr1) = throwError "unimplemented"
+compileExpr (EOr pos expr0 expr1) = throwError "unimplemented"
+
+compileStmt :: Stmt -> InterpreterMonad StringBuilder
+compileStmt (Empty pos) = throwError "unimplemented"
+compileStmt (BStmt pos block) = throwError "unimplemented"
+compileStmt (Decl pos tp decls) = throwError "unimplemented"
+compileStmt (Ass pos ident expr) = throwError "unimplemented"
+compileStmt (Incr pos ident) = throwError "unimplemented"
+compileStmt (Decr pos ident) = throwError "unimplemented"
+compileStmt (Ret pos expr) = throwError "unimplemented"
+compileStmt (VRet pos) = throwError "unimplemented"
+compileStmt (Cond pos expr stmt) = throwError "unimplemented"
+compileStmt (CondElse pos expr stmtTrue stmtFalse) = throwError "unimplemented"
+compileStmt (While pos expr stmt) = throwError "unimplemented"
+compileStmt (SExp pos expr) = throwError "unimplemented"
 
 
-runTopDefs :: StringBuilder -> [Stmt] -> InterpreterMonad StringBuilder
-runTopDefs code ((SAss pos ident exp):lst) = do
-    (valCode, expIdent) <- eval exp
-    let currIdent = "%" ++ identStr ident
-    env <- ask
-    case Data.Map.lookup ident env of
-        Just loc -> do
-            runTopDefs (Lst [code, valCode, Str $ "\tstore i32 " ++ expIdent ++ ", i32* " ++ currIdent ++ "\n"]) lst
-        Nothing -> do
-            loc <- newloc
-            local (Data.Map.insert ident loc) (runTopDefs (Lst [
-                code,
-                valCode, 
-                Str $ "\t" ++ currIdent ++ " = alloca i32\n" ++
-                "\tstore i32 " ++ expIdent ++ ", i32* " ++ currIdent ++ "\n"]) lst)
-runTopDefs code ((SExp pos exp):lst) = do
-    (resCode, expIdent) <- eval exp
-    printStrIdent <- nextIdent
-    callIdent <- nextIdent
-    runTopDefs (Lst [
-        code,
-        resCode, 
-        Str $ "\t" ++ printStrIdent ++ " = getelementptr [4 x i8], [4 x i8]* @printInt, i32 0, i32 0\n" ++
-        "\t" ++ callIdent ++ " = call i32(i8*, ...) @printf(i8* " ++ printStrIdent ++ ", i32 " ++ expIdent ++ ")\n"])
-        lst
+runTopDefs :: StringBuilder -> [TopDef] -> InterpreterMonad StringBuilder
+runTopDefs code ((FnDef pos tp ident args block):lst) = throwError "unimplemented"
+runTopDefs code ((ClassDef pos ident elems):lst) = throwError "unimplemented"
+runTopDefs code ((ClassExt pos classIdent parentIdent elems):lst) = throwError "unimplemented"
 runTopDefs code [] = do return code
 
 
 compileProgram :: Program -> InterpreterMonad String
-compileProgram (Prog pos stmt) = do
-    code <- runTopDefs (Lst [
-        Str "declare i32 @printf(i8*, ...)\n\n",
-        Str "@printInt = internal constant [4 x i8] c\"%d\\0A\\00\"\n\n",
-        Str "define i32 @main(i32 %argc, i8** %argv) {\n"
-        ]) stmt
-    return $ buildString (Lst [code, Str "\tret i32 0\n}\n"]) 
+compileProgram (Program pos topDefs) = do
+    code <- runTopDefs (BLst []) topDefs
+    return $ buildString code
