@@ -30,18 +30,19 @@ except ``"`` unless preceded by ``\``.
 The set of reserved words is the set of terminals appearing in the grammar. Those reserved words that consist of non-letter characters are called symbols, and they are treated in a different way from those that are similar to identifiers. The lexer follows rules familiar from languages like Haskell, C, and Java, including longest match and spacing conventions.
 
 The reserved words used in Latte are the following:
-  | ``boolean`` | ``class`` | ``else`` | ``false``
-  | ``if`` | ``int`` | ``return`` | ``string``
-  | ``true`` | ``void`` | ``while`` |
+  | ``boolean`` | ``class`` | ``else`` | ``extends``
+  | ``false`` | ``if`` | ``int`` | ``new``
+  | ``return`` | ``string`` | ``true`` | ``void``
+  | ``while`` |  |  |
 
 The symbols used in Latte are the following:
   | ( | ) | , | {
   | } | ; | = | ++
-  | -- | [ | ] | -
-  | ! | && | || | +
-  | * | / | % | <
-  | <= | > | >= | ==
-  | != |  |  |
+  | -- | [ | ] | .
+  | [] | - | ! | &&
+  | || | + | * | /
+  | % | < | <= | >
+  | >= | == | != |
 
 ===Comments===
 Single-line comments begin with #, //.Multiple-line comments are  enclosed with /* and */.
@@ -55,6 +56,7 @@ All other symbols are terminals.
   | //Program// | -> | //[TopDef]//
   | //TopDef// | -> | //Type// //Ident// ``(`` //[Arg]// ``)`` //Block//
   |  |  **|**  | ``class`` //Ident// ``{`` //[ClassElem]// ``}``
+  |  |  **|**  | ``class`` //Ident// ``extends`` //Ident// ``{`` //[ClassElem]// ``}``
   | //[TopDef]// | -> | //TopDef//
   |  |  **|**  | //TopDef// //[TopDef]//
   | //Arg// | -> | //Type// //Ident//
@@ -86,7 +88,9 @@ All other symbols are terminals.
   |  |  **|**  | //Item// ``,`` //[Item]//
   | //Var// | -> | //Ident//
   |  |  **|**  | //Var// ``[`` //Expr// ``]``
+  |  |  **|**  | //Var// ``.`` //Ident//
   | //Type// | -> | //Ident//
+  |  |  **|**  | //Type// ``[]``
   |  |  **|**  | ``int``
   |  |  **|**  | ``string``
   |  |  **|**  | ``boolean``
@@ -94,19 +98,30 @@ All other symbols are terminals.
   | //[Type]// | -> | **eps**
   |  |  **|**  | //Type//
   |  |  **|**  | //Type// ``,`` //[Type]//
-  | //Expr6// | -> | //Var//
+  | //New// | -> | ``new`` //Type//
+  |  |  **|**  | //New// ``[`` //Expr// ``]``
+  | //Expr6// | -> | //New//
+  |  |  **|**  | //Var//
   |  |  **|**  | //Integer//
   |  |  **|**  | ``true``
   |  |  **|**  | ``false``
-  |  |  **|**  | //Ident// ``(`` //[Expr]// ``)``
+  |  |  **|**  | ``[`` //[Expr]// ``]``
+  |  |  **|**  | //Var// ``(`` //[Expr]// ``)``
   |  |  **|**  | //String//
+  |  |  **|**  | ``(`` //Expr// ``)``
   | //Expr5// | -> | ``-`` //Expr6//
   |  |  **|**  | ``!`` //Expr6//
+  |  |  **|**  | //Expr6//
   | //Expr4// | -> | //Expr4// //MulOp// //Expr5//
+  |  |  **|**  | //Expr5//
   | //Expr3// | -> | //Expr3// //AddOp// //Expr4//
+  |  |  **|**  | //Expr4//
   | //Expr2// | -> | //Expr2// //RelOp// //Expr3//
+  |  |  **|**  | //Expr3//
   | //Expr1// | -> | //Expr2// ``&&`` //Expr1//
+  |  |  **|**  | //Expr2//
   | //Expr// | -> | //Expr1// ``||`` //Expr//
+  |  |  **|**  | //Expr1//
   | //[Expr]// | -> | **eps**
   |  |  **|**  | //Expr//
   |  |  **|**  | //Expr// ``,`` //[Expr]//

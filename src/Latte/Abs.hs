@@ -56,6 +56,8 @@ data Stmt' a
     | Cond a (Expr' a) (Stmt' a)
     | CondElse a (Expr' a) (Stmt' a) (Stmt' a)
     | While a (Expr' a) (Stmt' a)
+    | For a (Type' a) Ident (Expr' a) (Expr' a) (Stmt' a) (Stmt' a)
+    | ForEach a (Type' a) Ident (Expr' a) (Stmt' a)
     | SExp a (Expr' a)
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
@@ -92,6 +94,7 @@ data Expr' a
     | ELitInt a Integer
     | ELitTrue a
     | ELitFalse a
+    | ELitArr a [Expr' a]
     | EApp a (Var' a) [Expr' a]
     | EString a String
     | Neg a (Expr' a)
@@ -169,6 +172,8 @@ instance HasPosition Stmt where
     Cond p _ _ -> p
     CondElse p _ _ _ -> p
     While p _ _ -> p
+    For p _ _ _ _ _ _ -> p
+    ForEach p _ _ _ _ -> p
     SExp p _ -> p
 
 instance HasPosition Item where
@@ -204,6 +209,7 @@ instance HasPosition Expr where
     ELitInt p _ -> p
     ELitTrue p -> p
     ELitFalse p -> p
+    ELitArr p _ -> p
     EApp p _ _ -> p
     EString p _ -> p
     Neg p _ -> p

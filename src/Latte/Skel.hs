@@ -55,6 +55,8 @@ transStmt x = case x of
   Latte.Abs.Cond _ expr stmt -> failure x
   Latte.Abs.CondElse _ expr stmt1 stmt2 -> failure x
   Latte.Abs.While _ expr stmt -> failure x
+  Latte.Abs.For _ type_ ident expr1 expr2 stmt1 stmt2 -> failure x
+  Latte.Abs.ForEach _ type_ ident expr stmt -> failure x
   Latte.Abs.SExp _ expr -> failure x
 
 transItem :: Show a => Latte.Abs.Item' a -> Result
@@ -90,6 +92,7 @@ transExpr x = case x of
   Latte.Abs.ELitInt _ integer -> failure x
   Latte.Abs.ELitTrue _ -> failure x
   Latte.Abs.ELitFalse _ -> failure x
+  Latte.Abs.ELitArr _ exprs -> failure x
   Latte.Abs.EApp _ var exprs -> failure x
   Latte.Abs.EString _ string -> failure x
   Latte.Abs.Neg _ expr -> failure x

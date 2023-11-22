@@ -23,6 +23,7 @@ module Latte.Par
   , pVar
   , pType
   , pListType
+  , pNew
   , pExpr6
   , pExpr5
   , pExpr4
@@ -58,6 +59,7 @@ import Latte.Lex
 %name pVar_internal Var
 %name pType_internal Type
 %name pListType_internal ListType
+%name pNew_internal New
 %name pExpr6_internal Expr6
 %name pExpr5_internal Expr5
 %name pExpr4_internal Expr4
@@ -85,30 +87,34 @@ import Latte.Lex
   ','       { PT _ (TS _ 10) }
   '-'       { PT _ (TS _ 11) }
   '--'      { PT _ (TS _ 12) }
-  '/'       { PT _ (TS _ 13) }
-  ';'       { PT _ (TS _ 14) }
-  '<'       { PT _ (TS _ 15) }
-  '<='      { PT _ (TS _ 16) }
-  '='       { PT _ (TS _ 17) }
-  '=='      { PT _ (TS _ 18) }
-  '>'       { PT _ (TS _ 19) }
-  '>='      { PT _ (TS _ 20) }
-  '['       { PT _ (TS _ 21) }
-  ']'       { PT _ (TS _ 22) }
-  'boolean' { PT _ (TS _ 23) }
-  'class'   { PT _ (TS _ 24) }
-  'else'    { PT _ (TS _ 25) }
-  'false'   { PT _ (TS _ 26) }
-  'if'      { PT _ (TS _ 27) }
-  'int'     { PT _ (TS _ 28) }
-  'return'  { PT _ (TS _ 29) }
-  'string'  { PT _ (TS _ 30) }
-  'true'    { PT _ (TS _ 31) }
-  'void'    { PT _ (TS _ 32) }
-  'while'   { PT _ (TS _ 33) }
-  '{'       { PT _ (TS _ 34) }
-  '||'      { PT _ (TS _ 35) }
-  '}'       { PT _ (TS _ 36) }
+  '.'       { PT _ (TS _ 13) }
+  '/'       { PT _ (TS _ 14) }
+  ';'       { PT _ (TS _ 15) }
+  '<'       { PT _ (TS _ 16) }
+  '<='      { PT _ (TS _ 17) }
+  '='       { PT _ (TS _ 18) }
+  '=='      { PT _ (TS _ 19) }
+  '>'       { PT _ (TS _ 20) }
+  '>='      { PT _ (TS _ 21) }
+  '['       { PT _ (TS _ 22) }
+  '[]'      { PT _ (TS _ 23) }
+  ']'       { PT _ (TS _ 24) }
+  'boolean' { PT _ (TS _ 25) }
+  'class'   { PT _ (TS _ 26) }
+  'else'    { PT _ (TS _ 27) }
+  'extends' { PT _ (TS _ 28) }
+  'false'   { PT _ (TS _ 29) }
+  'if'      { PT _ (TS _ 30) }
+  'int'     { PT _ (TS _ 31) }
+  'new'     { PT _ (TS _ 32) }
+  'return'  { PT _ (TS _ 33) }
+  'string'  { PT _ (TS _ 34) }
+  'true'    { PT _ (TS _ 35) }
+  'void'    { PT _ (TS _ 36) }
+  'while'   { PT _ (TS _ 37) }
+  '{'       { PT _ (TS _ 38) }
+  '||'      { PT _ (TS _ 39) }
+  '}'       { PT _ (TS _ 40) }
   L_Ident   { PT _ (TV _)    }
   L_integ   { PT _ (TI _)    }
   L_quoted  { PT _ (TL _)    }
@@ -132,6 +138,7 @@ TopDef :: { (Latte.Abs.BNFC'Position, Latte.Abs.TopDef) }
 TopDef
   : Type Ident '(' ListArg ')' Block { (fst $1, Latte.Abs.FnDef (fst $1) (snd $1) (snd $2) (snd $4) (snd $6)) }
   | 'class' Ident '{' ListClassElem '}' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ClassDef (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2) (snd $4)) }
+  | 'class' Ident 'extends' Ident '{' ListClassElem '}' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ClassExt (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2) (snd $4) (snd $6)) }
 
 ListTopDef :: { (Latte.Abs.BNFC'Position, [Latte.Abs.TopDef]) }
 ListTopDef
@@ -196,10 +203,12 @@ Var :: { (Latte.Abs.BNFC'Position, Latte.Abs.Var) }
 Var
   : Ident { (fst $1, Latte.Abs.IdentVar (fst $1) (snd $1)) }
   | Var '[' Expr ']' { (fst $1, Latte.Abs.ArrayVar (fst $1) (snd $1) (snd $3)) }
+  | Var '.' Ident { (fst $1, Latte.Abs.AttrVar (fst $1) (snd $1) (snd $3)) }
 
 Type :: { (Latte.Abs.BNFC'Position, Latte.Abs.Type) }
 Type
   : Ident { (fst $1, Latte.Abs.Class (fst $1) (snd $1)) }
+  | Type '[]' { (fst $1, Latte.Abs.Array (fst $1) (snd $1)) }
   | 'int' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Int (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'string' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Str (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'boolean' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Bool (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
@@ -211,39 +220,53 @@ ListType
   | Type { (fst $1, (:[]) (snd $1)) }
   | Type ',' ListType { (fst $1, (:) (snd $1) (snd $3)) }
 
+New :: { (Latte.Abs.BNFC'Position, Latte.Abs.New) }
+New
+  : 'new' Type { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.NewBase (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  | New '[' Expr ']' { (fst $1, Latte.Abs.NewArray (fst $1) (snd $1) (snd $3)) }
+
 Expr6 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr6
-  : Var { (fst $1, Latte.Abs.EVar (fst $1) (snd $1)) }
+  : New { (fst $1, Latte.Abs.ENew (fst $1) (snd $1)) }
+  | Var { (fst $1, Latte.Abs.EVar (fst $1) (snd $1)) }
   | Integer { (fst $1, Latte.Abs.ELitInt (fst $1) (snd $1)) }
   | 'true' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitTrue (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'false' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitFalse (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
-  | Ident '(' ListExpr ')' { (fst $1, Latte.Abs.EApp (fst $1) (snd $1) (snd $3)) }
+  | '[' ListExpr ']' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitArr (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  | Var '(' ListExpr ')' { (fst $1, Latte.Abs.EApp (fst $1) (snd $1) (snd $3)) }
   | String { (fst $1, Latte.Abs.EString (fst $1) (snd $1)) }
+  | '(' Expr ')' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), (snd $2)) }
 
 Expr5 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr5
   : '-' Expr6 { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Neg (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
   | '!' Expr6 { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Not (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  | Expr6 { (fst $1, (snd $1)) }
 
 Expr4 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr4
   : Expr4 MulOp Expr5 { (fst $1, Latte.Abs.EMul (fst $1) (snd $1) (snd $2) (snd $3)) }
+  | Expr5 { (fst $1, (snd $1)) }
 
 Expr3 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr3
   : Expr3 AddOp Expr4 { (fst $1, Latte.Abs.EAdd (fst $1) (snd $1) (snd $2) (snd $3)) }
+  | Expr4 { (fst $1, (snd $1)) }
 
 Expr2 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr2
   : Expr2 RelOp Expr3 { (fst $1, Latte.Abs.ERel (fst $1) (snd $1) (snd $2) (snd $3)) }
+  | Expr3 { (fst $1, (snd $1)) }
 
 Expr1 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr1
   : Expr2 '&&' Expr1 { (fst $1, Latte.Abs.EAnd (fst $1) (snd $1) (snd $3)) }
+  | Expr2 { (fst $1, (snd $1)) }
 
 Expr :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr
   : Expr1 '||' Expr { (fst $1, Latte.Abs.EOr (fst $1) (snd $1) (snd $3)) }
+  | Expr1 { (fst $1, (snd $1)) }
 
 ListExpr :: { (Latte.Abs.BNFC'Position, [Latte.Abs.Expr]) }
 ListExpr
@@ -332,6 +355,9 @@ pType = fmap snd . pType_internal
 
 pListType :: [Token] -> Err [Latte.Abs.Type]
 pListType = fmap snd . pListType_internal
+
+pNew :: [Token] -> Err Latte.Abs.New
+pNew = fmap snd . pNew_internal
 
 pExpr6 :: [Token] -> Err Latte.Abs.Expr
 pExpr6 = fmap snd . pExpr6_internal

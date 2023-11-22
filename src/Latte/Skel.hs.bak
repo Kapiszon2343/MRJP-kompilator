@@ -27,6 +27,7 @@ transTopDef :: Show a => Latte.Abs.TopDef' a -> Result
 transTopDef x = case x of
   Latte.Abs.FnDef _ type_ ident args block -> failure x
   Latte.Abs.ClassDef _ ident classelems -> failure x
+  Latte.Abs.ClassExt _ ident1 ident2 classelems -> failure x
 
 transArg :: Show a => Latte.Abs.Arg' a -> Result
 transArg x = case x of
@@ -65,23 +66,32 @@ transVar :: Show a => Latte.Abs.Var' a -> Result
 transVar x = case x of
   Latte.Abs.IdentVar _ ident -> failure x
   Latte.Abs.ArrayVar _ var expr -> failure x
+  Latte.Abs.AttrVar _ var ident -> failure x
 
 transType :: Show a => Latte.Abs.Type' a -> Result
 transType x = case x of
   Latte.Abs.Class _ ident -> failure x
+  Latte.Abs.Array _ type_ -> failure x
   Latte.Abs.Int _ -> failure x
   Latte.Abs.Str _ -> failure x
   Latte.Abs.Bool _ -> failure x
   Latte.Abs.Void _ -> failure x
   Latte.Abs.Fun _ type_ types -> failure x
 
+transNew :: Show a => Latte.Abs.New' a -> Result
+transNew x = case x of
+  Latte.Abs.NewBase _ type_ -> failure x
+  Latte.Abs.NewArray _ new expr -> failure x
+
 transExpr :: Show a => Latte.Abs.Expr' a -> Result
 transExpr x = case x of
+  Latte.Abs.ENew _ new -> failure x
   Latte.Abs.EVar _ var -> failure x
   Latte.Abs.ELitInt _ integer -> failure x
   Latte.Abs.ELitTrue _ -> failure x
   Latte.Abs.ELitFalse _ -> failure x
-  Latte.Abs.EApp _ ident exprs -> failure x
+  Latte.Abs.ELitArr _ exprs -> failure x
+  Latte.Abs.EApp _ var exprs -> failure x
   Latte.Abs.EString _ string -> failure x
   Latte.Abs.Neg _ expr -> failure x
   Latte.Abs.Not _ expr -> failure x

@@ -13,6 +13,14 @@ type Index = Integer
 type Loc = Int
 type Env = Data.Map.Map Ident Loc
 
+type BuiltInFunction = (Ident, Type, StringBuilder)
+
+argToType :: Arg -> Type
+argToType (Arg _pos tp _ident) = tp
+
+argToIdent :: Arg -> Ident
+argToIdent (Arg _pos _tp ident) = ident
+
 identStr :: Ident -> String
 identStr (Ident str) = str
 
