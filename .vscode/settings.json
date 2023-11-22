@@ -15,6 +15,7 @@
         "tinvokevirtual",
         "tistore",
         "tisub",
-        "tsipush"
+        "tsipush",
+        "vals"
     ]
 }

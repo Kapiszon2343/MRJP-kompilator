@@ -24,6 +24,18 @@ argToIdent (Arg _pos _tp ident) = ident
 identStr :: Ident -> String
 identStr (Ident str) = str
 
+typePos :: Type -> BNFC'Position
+typePos (Class pos _ident) = pos
+typePos (Array pos _tp) = pos
+typePos (Int pos) = pos
+typePos (Str pos) = pos
+typePos (Bool pos) = pos
+typePos (Void pos) = pos
+typePos (Fun pos _tp _tps) = pos
+
+
+builtInFunctions = []
+
 data StringBuilder 
     = BStr String
     | BLst [StringBuilder]
