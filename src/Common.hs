@@ -35,6 +35,7 @@ typePos (Fun pos _tp _tps) = pos
 
 posToStr :: BNFC'Position -> String
 posToStr (Just (line, column)) = "(line: " ++ show line ++ ", column: " ++ show column ++ ")"
+posToStr Nothing = "unknown position"
 
 builtInFunctions = []
 
