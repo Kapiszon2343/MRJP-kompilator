@@ -33,6 +33,8 @@ typePos (Bool pos) = pos
 typePos (Void pos) = pos
 typePos (Fun pos _tp _tps) = pos
 
+posToStr :: BNFC'Position -> String
+posToStr (Just (line, column)) = "(line: " ++ show line ++ ", column: " ++ show column ++ ")"
 
 builtInFunctions = []
 
