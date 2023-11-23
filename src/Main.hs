@@ -26,6 +26,7 @@ import Latte.Skel  ()
 
 import Run ( runCompiler )
 import qualified Latte.Abs as Data.Map
+import System.IO
 
 type Err        = Either String
 type ParseFun a = [Token] -> Err a
@@ -41,10 +42,12 @@ run :: Verbosity -> ParseFun Program -> String -> String -> String -> IO ()
 run v p filePath fileName s =
   case p ts of
     Left err -> do
-      putStrLn "\nParse              Failed...\n"
-      putStrV v "Tokens:"
-      mapM_ (putStrV v . showPosToken . mkPosToken) ts
-      putStrLn err
+      hPutStrLn stderr "ERROR\n"
+      hPutStrLn stderr err
+      -- putStrLn "\nParse              Failed...\n"
+      -- putStrV v "Tokens:"
+      -- mapM_ (putStrV v . showPosToken . mkPosToken) ts
+      -- putStrLn err
       exitFailure
     Right tree -> do
       -- putStrLn "\nParse Successful!"
