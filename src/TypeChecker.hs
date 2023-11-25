@@ -276,19 +276,19 @@ typeCheck expectedType _ (BStmt bStmtPos block) =
 typeCheck expectedType blockIdent (Decl pos valType items) = do
     vals <- evalItems blockIdent valType items
     return (\env -> Prelude.foldl (\ mp (ident, loc) -> Data.Map.insert ident loc mp) env vals, NoRet)
-typeCheck expectedType _ (Ass pos ident expr) = do 
+typeCheck expectedType _ (Ass pos var expr) = do 
     exprTp <- eval expr
-    tp <- getVarType (IdentVar pos ident)
+    tp <- getVarType var
     if matchType tp exprTp
         then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp ++ "\nActual: " ++ showType exprTp
-typeCheck expectedType _ (Incr pos ident) = do 
-    tp <- getVarType (IdentVar pos ident)
+typeCheck expectedType _ (Incr pos var) = do 
+    tp <- getVarType var
     if matchType tp (Int pos)
         then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: " ++ showType tp
-typeCheck expectedType _ (Decr pos ident) = do 
-    tp <- getVarType (IdentVar pos ident)
+typeCheck expectedType _ (Decr pos var) = do 
+    tp <- getVarType var
     if matchType tp (Int pos)
         then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: " ++ showType tp
