@@ -160,20 +160,20 @@ eval (Neg pos expr) = do
     tp <- eval expr
     if matchType tp (Int pos)
         then return (Int pos)
-        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp
+        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp
 eval (Not pos expr) = do
     tp <- eval expr
     if matchType tp (Bool pos)
         then return (Bool pos)
-        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp
+        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp
 eval (EMul pos expr1 op expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
     if matchType tp1 (Int pos)
         then if matchType tp2 (Int pos)
             then return (Int pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp2
-        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp1
+            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
+        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp1
 eval (EAdd pos expr1 op expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
@@ -181,59 +181,59 @@ eval (EAdd pos expr1 op expr2) = do
         (Plus _) -> case tp1 of
             (Int _) -> if matchType tp2 (Int pos)
                 then return (Int pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
             (Str _) -> if matchType tp2 (Str pos)
                     then return (Str pos)
-                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp2
-            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int or String\nActual: " ++ showType tp1
+                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
+            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int or string\nActual: " ++ showType tp1
         (Minus _) -> case tp1 of
             (Int _) -> if matchType tp2 (Int pos)
                 then return (Int pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
             (Str _) -> if matchType tp2 (Str pos)
                     then return (Str pos)
-                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp2
-            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp1
+                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
+            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp1
 eval (ERel pos expr1 op expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
     case tp1 of
         (Int _) -> if matchType tp2 (Int pos)
             then return (Bool pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int\nActual: " ++ showType tp2
+            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
         (Bool _) -> case op of
             (EQU _) -> if matchType tp2 (Bool pos)
                 then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
             (NE _) -> if matchType tp2 (Bool pos)
                 then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp2
-            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
+            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
         (Str _) -> case op of
             (EQU _) -> if matchType tp2 (Str pos)
                 then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Str\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
             (NE _) -> if matchType tp2 (Str pos)
                 then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Str\nActual: " ++ showType tp2
-            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Str\nActual: " ++ showType tp2
-        _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Int, Bool or String\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
+            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
+        _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int, bool or string\nActual: " ++ showType tp2
 eval (EAnd pos expr1 expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
     if matchType tp1 (Bool pos)
         then if matchType tp2 (Bool pos)
             then return (Bool pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp2
-        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp1
+            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
+        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp1
 eval (EOr pos expr1 expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
     if matchType tp1 (Bool pos)
         then if matchType tp2 (Bool pos)
             then return (Bool pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp2
-        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tp1
+            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
+        else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp1
 
 evalItems :: Env -> Type -> [Item] -> TypeCheckerMonad [(Ident, Loc)]
 evalItems _blockIdent _def [] = return []
@@ -324,7 +324,7 @@ typeCheck expectedType blockIdent (While pos expr loopStmt) = do
     tpCond <- eval expr
     case tpCond of
         Bool _ -> typeCheck expectedType blockIdent loopStmt
-        _ -> throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tpCond
+        _ -> throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tpCond
 typeCheck expectedType _ (For pos valType ident exprSet exprCond incrStmt loopStmt) = do
     iterLoc <- newloc
     iterLoc <- newloc
@@ -339,7 +339,7 @@ typeCheck expectedType _ (For pos valType ident exprSet exprCond incrStmt loopSt
                         (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) incrStmt)
                     local (Data.Map.insert ident iterLoc) 
                         (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) loopStmt)
-                else throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: Bool\nActual: " ++ showType tpCond
+                else throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tpCond
         else throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: " ++ showType valType ++ "\nActual: " ++ showType tpSet
 typeCheck expectedType _ (ForEach pos valType ident expr loopStmt) = do
     val <- eval expr
