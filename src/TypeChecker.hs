@@ -53,7 +53,7 @@ confirmRetType tp1 (DoRet tp2) = if matchType tp1 tp2
 data RetType
     = DoRet Type
     | NoRet
-type Ret = Env -> Env
+type Ret = (Env -> Env, RetType)
 
 type Mem = Data.Map.Map Loc Type
 type Store = (Mem, Loc)
@@ -95,8 +95,12 @@ getVarType (ArrayVar pos var expr) = do
 
 checkFunc' ::  BNFC'Position -> Env -> Type -> [Arg] -> Block -> TypeCheckerMonad Type
 checkFunc' pos blockIdent ret [] block = do
-    typeCheckBlock ret blockIdent block
-    return ret
+    (_, actualRet) <- typeCheckBlock ret blockIdent block
+    case actualRet of
+        DoRet _ -> return ret
+        NoRet -> case ret of 
+            (Void _) -> return ret
+            _ -> throwError $ "Return value expected in function at: " ++ posToStr pos
 checkFunc' pos blockIdent ret (arg:args) block = do
     let tp = argToType arg
     let ident = argToIdent arg
@@ -254,54 +258,67 @@ evalItems blockIdent tp ((Init pos ident expr):items) = do
                     return $ (ident, loc):rets
                 else throwError $ "Wrong assign type at: " ++ posToStr pos ++ "\nExpected: " ++ show evalTp ++ "\nActual: " ++ show tp
 
+typeCheckBlock' :: Type -> RetType -> Env -> Block -> TypeCheckerMonad Ret 
+typeCheckBlock' expectedType ret _ (Block _ []) = do return (id, ret)
+typeCheckBlock' expectedType ret blockIdent (Block pos (stmt:block)) = do
+    (envMod, newRet) <- typeCheck expectedType blockIdent stmt
+    case ret of
+        NoRet -> local envMod (typeCheckBlock' expectedType newRet (envMod blockIdent) (Block pos block))
+        DoRet _ -> local envMod (typeCheckBlock' expectedType ret (envMod blockIdent) (Block pos block))
+
 typeCheckBlock :: Type -> Env -> Block -> TypeCheckerMonad Ret 
-typeCheckBlock expectedType _ (Block _ []) = do return id
+typeCheckBlock expectedType _ (Block _ []) = do return (id, NoRet)
 typeCheckBlock expectedType blockIdent (Block pos (stmt:block)) = do
-    envMod <- typeCheck expectedType blockIdent stmt
+    (envMod, ret) <- typeCheck expectedType blockIdent stmt
     local envMod (typeCheckBlock expectedType (envMod blockIdent) (Block pos block))
 
 typeCheck :: Type -> Env -> Stmt -> TypeCheckerMonad Ret
-typeCheck expectedType _ (Empty pos) = do return id
+typeCheck expectedType _ (Empty pos) = do return (id, NoRet)
 typeCheck expectedType _ (BStmt bStmtPos block) = 
     typeCheckBlock expectedType Data.Map.empty block
 typeCheck expectedType blockIdent (Decl pos valType items) = do
     vals <- evalItems blockIdent valType items
-    return $ \env -> Prelude.foldl (\ mp (ident, loc) -> Data.Map.insert ident loc mp) env vals
+    return (\env -> Prelude.foldl (\ mp (ident, loc) -> Data.Map.insert ident loc mp) env vals, NoRet)
 typeCheck expectedType _ (Ass pos ident expr) = do 
     exprTp <- eval expr
     tp <- getVarType (IdentVar pos ident)
     if matchType tp exprTp
-        then return id
+        then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show tp ++ "\nActual: " ++ show exprTp
 typeCheck expectedType _ (Incr pos ident) = do 
     tp <- getVarType (IdentVar pos ident)
     if matchType tp (Int pos)
-        then return id
+        then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show expectedType ++ "\nActual: " ++ show tp
 typeCheck expectedType _ (Decr pos ident) = do 
     tp <- getVarType (IdentVar pos ident)
     if matchType tp (Int pos)
-        then return id
+        then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show expectedType ++ "\nActual: " ++ show tp
 typeCheck expectedType _ (Ret pos expr) = do 
     tp <- eval expr
     if matchType tp expectedType
-        then return id
+        then return (id, DoRet tp)
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show expectedType ++ "\nActual: " ++ show tp
 typeCheck expectedType _ (VRet pos) = if matchType (Void pos) expectedType
-        then return id
+        then return (id, DoRet (Void pos))
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show expectedType ++ "\nActual: Void"
 typeCheck expectedType blockIdent (Cond pos expr stmtTrue) = do
     tp <- eval expr
     if matchType tp (Bool pos)
-        then typeCheck expectedType blockIdent stmtTrue
+        then do
+            typeCheck expectedType blockIdent stmtTrue
+            return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show expectedType ++ "\nActual: " ++ show tp
 typeCheck expectedType blockIdent (CondElse pos expr stmtTrue stmtFalse) = do
     tp <- eval expr
     if matchType tp (Bool pos)
         then do 
-            typeCheck expectedType blockIdent stmtTrue
-            typeCheck expectedType blockIdent stmtFalse
+            (_, retTrue) <- typeCheck expectedType blockIdent stmtTrue
+            (_, retFalse) <- typeCheck expectedType blockIdent stmtFalse
+            case retTrue of
+                NoRet -> return (id, NoRet)
+                (DoRet _) -> return (id, retFalse)
         else throwError $ "Wrong return type at: " ++ posToStr pos ++ "\nExpected: " ++ show expectedType ++ "\nActual: " ++ show tp
 typeCheck expectedType blockIdent (While pos expr loopStmt) = do
     tpCond <- eval expr
@@ -319,9 +336,9 @@ typeCheck expectedType _ (For pos valType ident exprSet exprCond incrStmt loopSt
             if matchType tpCond (Bool Nothing)
                 then do
                     local (Data.Map.insert ident iterLoc) 
-                        (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) loopStmt)
-                    local (Data.Map.insert ident iterLoc) 
                         (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) incrStmt)
+                    local (Data.Map.insert ident iterLoc) 
+                        (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) loopStmt)
                 else throwError $ "Wrong expression type at: " ++ posToStr pos ++ "\nExpected: Bool\nActual: " ++ show tpCond
         else throwError $ "Wrong expression type at: " ++ posToStr pos ++ "\nExpected: " ++ show valType ++ "\nActual: " ++ show tpSet
 typeCheck expectedType _ (ForEach pos valType ident expr loopStmt) = do
@@ -337,7 +354,7 @@ typeCheck expectedType _ (ForEach pos valType ident expr loopStmt) = do
         _ -> throwError $ "Foreach requires array to iterate through at: " ++ posToStr pos
 typeCheck expectedType _ (SExp pos expr) = do
     eval expr
-    return id
+    return (id, NoRet)
 
 runTopDefs :: [TopDef] -> TypeCheckerMonad (IO ())
 runTopDefs [] = do 
