@@ -8,6 +8,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Bifunctor
 import Text.Read (readMaybe)
+import Data.Array (Array)
 
 type Index = Integer
 type Loc = Int
@@ -33,9 +34,31 @@ typePos (Bool pos) = pos
 typePos (Void pos) = pos
 typePos (Fun pos _tp _tps) = pos
 
-posToStr :: BNFC'Position -> String
-posToStr (Just (line, column)) = "(line: " ++ show line ++ ", column: " ++ show column ++ ")"
-posToStr Nothing = "unknown position"
+showPos :: BNFC'Position -> String
+showPos (Just (line, column)) = "(line: " ++ show line ++ ", column: " ++ show column ++ ")"
+showPos Nothing = "unknown position"
+
+showIdent :: Ident -> String
+showIdent (Ident str) = str
+
+showTypes :: [Type] -> String
+showTypes [] = ""
+showTypes [tp] = showType tp
+showTypes (tp:tail) = showType tp ++ ", " ++ showTypes tail
+
+showType :: Type -> String
+showType (Class _ ident) = showIdent ident
+showType (Array _ tp) = showType tp ++ "[]"
+showType (Int _) = "int"
+showType (Str _) = "string"
+showType (Bool _) = "bool"
+showType (Void _) = "void"
+showType (Fun _ retTp argTps) = showType retTp ++ "(" ++ showTypes argTps ++  ")"
+
+showVar :: Var -> String
+showVar (IdentVar _ ident) = showIdent ident
+showVar (ArrayVar _ var _) = showVar var ++ "[int]"
+showVar (AttrVar _ var ident) = showVar var ++ "." ++ showIdent ident
 
 builtInFunctions = []
 
