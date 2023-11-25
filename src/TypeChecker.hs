@@ -92,6 +92,14 @@ getVarType (ArrayVar pos var expr) = do
             (Array _ inTp) -> return inTp
             _ -> throwError $ "Expected " ++ showVar var ++ " to be an array, got: " ++ showType arrMTp
         _ -> throwError $ "array index has to an int, got: " ++ showType tp
+getVarType (AttrVar pos var ident) = do
+    baseTp <- getVarType var
+    case baseTp of
+        Array _ _ -> if showIdent ident == "length"
+            then return $ Int pos
+            else throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ " does not have attribute " ++ showIdent ident
+        Class _ _ -> throwError "unimplemented"
+        _ -> throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ "does not have attributes"
 
 checkFunc' ::  BNFC'Position -> Env -> Type -> [Arg] -> Block -> TypeCheckerMonad Type
 checkFunc' pos blockIdent ret [] block = do
