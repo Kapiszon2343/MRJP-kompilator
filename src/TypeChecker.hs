@@ -136,8 +136,15 @@ eval :: Expr -> TypeCheckerMonad Type
 eval (EVar pos var) = do
     getVarType var
 eval (ENew pos new) =
-    throwError "unimplemented"
-    -- makeArray exprArr valType pos
+    case new of
+        NewBase _ baseTp -> return baseTp
+        NewArray posArr newBase expr -> do
+            lenTp <- eval expr
+            case lenTp of
+                Int _ -> do
+                    baseTp <- eval (ENew pos newBase)
+                    return $ Array posArr baseTp
+                _ -> throwError $ "Wrong parameter at: " ++ showPos posArr ++ "\nExpected int\nActual: " ++ showType lenTp
 eval (ELitArr pos []) = throwError $ "Cannot initialize empty array due to ambiguous type at: " ++ showPos pos
 eval (ELitArr pos (expr:tail)) = do
     tpBase <- eval expr
