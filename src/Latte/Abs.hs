@@ -95,6 +95,7 @@ data Expr' a
     | ELitTrue a
     | ELitFalse a
     | ELitArr a [Expr' a]
+    | ELitNull a Ident
     | EApp a (Var' a) [Expr' a]
     | EString a String
     | Neg a (Expr' a)
@@ -210,6 +211,7 @@ instance HasPosition Expr where
     ELitTrue p -> p
     ELitFalse p -> p
     ELitArr p _ -> p
+    ELitNull p _ -> p
     EApp p _ _ -> p
     EString p _ -> p
     Neg p _ -> p

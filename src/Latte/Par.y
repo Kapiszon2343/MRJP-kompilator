@@ -81,42 +81,43 @@ import Latte.Lex
   '&&'      { PT _ (TS _ 4)  }
   '('       { PT _ (TS _ 5)  }
   ')'       { PT _ (TS _ 6)  }
-  '*'       { PT _ (TS _ 7)  }
-  '+'       { PT _ (TS _ 8)  }
-  '++'      { PT _ (TS _ 9)  }
-  ','       { PT _ (TS _ 10) }
-  '-'       { PT _ (TS _ 11) }
-  '--'      { PT _ (TS _ 12) }
-  '.'       { PT _ (TS _ 13) }
-  '/'       { PT _ (TS _ 14) }
-  ':'       { PT _ (TS _ 15) }
-  ';'       { PT _ (TS _ 16) }
-  '<'       { PT _ (TS _ 17) }
-  '<='      { PT _ (TS _ 18) }
-  '='       { PT _ (TS _ 19) }
-  '=='      { PT _ (TS _ 20) }
-  '>'       { PT _ (TS _ 21) }
-  '>='      { PT _ (TS _ 22) }
-  '['       { PT _ (TS _ 23) }
-  '[]'      { PT _ (TS _ 24) }
-  ']'       { PT _ (TS _ 25) }
-  'boolean' { PT _ (TS _ 26) }
-  'class'   { PT _ (TS _ 27) }
-  'else'    { PT _ (TS _ 28) }
-  'extends' { PT _ (TS _ 29) }
-  'false'   { PT _ (TS _ 30) }
-  'for'     { PT _ (TS _ 31) }
-  'if'      { PT _ (TS _ 32) }
-  'int'     { PT _ (TS _ 33) }
-  'new'     { PT _ (TS _ 34) }
-  'return'  { PT _ (TS _ 35) }
-  'string'  { PT _ (TS _ 36) }
-  'true'    { PT _ (TS _ 37) }
-  'void'    { PT _ (TS _ 38) }
-  'while'   { PT _ (TS _ 39) }
-  '{'       { PT _ (TS _ 40) }
-  '||'      { PT _ (TS _ 41) }
-  '}'       { PT _ (TS _ 42) }
+  ')null'   { PT _ (TS _ 7)  }
+  '*'       { PT _ (TS _ 8)  }
+  '+'       { PT _ (TS _ 9)  }
+  '++'      { PT _ (TS _ 10) }
+  ','       { PT _ (TS _ 11) }
+  '-'       { PT _ (TS _ 12) }
+  '--'      { PT _ (TS _ 13) }
+  '.'       { PT _ (TS _ 14) }
+  '/'       { PT _ (TS _ 15) }
+  ':'       { PT _ (TS _ 16) }
+  ';'       { PT _ (TS _ 17) }
+  '<'       { PT _ (TS _ 18) }
+  '<='      { PT _ (TS _ 19) }
+  '='       { PT _ (TS _ 20) }
+  '=='      { PT _ (TS _ 21) }
+  '>'       { PT _ (TS _ 22) }
+  '>='      { PT _ (TS _ 23) }
+  '['       { PT _ (TS _ 24) }
+  '[]'      { PT _ (TS _ 25) }
+  ']'       { PT _ (TS _ 26) }
+  'boolean' { PT _ (TS _ 27) }
+  'class'   { PT _ (TS _ 28) }
+  'else'    { PT _ (TS _ 29) }
+  'extends' { PT _ (TS _ 30) }
+  'false'   { PT _ (TS _ 31) }
+  'for'     { PT _ (TS _ 32) }
+  'if'      { PT _ (TS _ 33) }
+  'int'     { PT _ (TS _ 34) }
+  'new'     { PT _ (TS _ 35) }
+  'return'  { PT _ (TS _ 36) }
+  'string'  { PT _ (TS _ 37) }
+  'true'    { PT _ (TS _ 38) }
+  'void'    { PT _ (TS _ 39) }
+  'while'   { PT _ (TS _ 40) }
+  '{'       { PT _ (TS _ 41) }
+  '||'      { PT _ (TS _ 42) }
+  '}'       { PT _ (TS _ 43) }
   L_Ident   { PT _ (TV _)    }
   L_integ   { PT _ (TI _)    }
   L_quoted  { PT _ (TL _)    }
@@ -237,6 +238,7 @@ Expr6
   | 'true' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitTrue (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'false' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitFalse (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | '[' ListExpr ']' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitArr (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  | '(' Ident ')null' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ELitNull (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
   | Var '(' ListExpr ')' { (fst $1, Latte.Abs.EApp (fst $1) (snd $1) (snd $3)) }
   | String { (fst $1, Latte.Abs.EString (fst $1) (snd $1)) }
   | '(' Expr ')' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), (snd $2)) }

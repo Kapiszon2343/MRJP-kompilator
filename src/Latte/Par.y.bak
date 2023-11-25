@@ -181,9 +181,9 @@ Stmt
   : ';' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Empty (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | Block { (fst $1, Latte.Abs.BStmt (fst $1) (snd $1)) }
   | Type ListItem ';' { (fst $1, Latte.Abs.Decl (fst $1) (snd $1) (snd $2)) }
-  | Ident '=' Expr ';' { (fst $1, Latte.Abs.Ass (fst $1) (snd $1) (snd $3)) }
-  | Ident '++' ';' { (fst $1, Latte.Abs.Incr (fst $1) (snd $1)) }
-  | Ident '--' ';' { (fst $1, Latte.Abs.Decr (fst $1) (snd $1)) }
+  | Var '=' Expr ';' { (fst $1, Latte.Abs.Ass (fst $1) (snd $1) (snd $3)) }
+  | Var '++' ';' { (fst $1, Latte.Abs.Incr (fst $1) (snd $1)) }
+  | Var '--' ';' { (fst $1, Latte.Abs.Decr (fst $1) (snd $1)) }
   | 'return' Expr ';' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Ret (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
   | 'return' ';' { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.VRet (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'if' '(' Expr ')' Stmt { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Cond (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $3) (snd $5)) }

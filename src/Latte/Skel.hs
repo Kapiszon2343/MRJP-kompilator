@@ -93,6 +93,7 @@ transExpr x = case x of
   Latte.Abs.ELitTrue _ -> failure x
   Latte.Abs.ELitFalse _ -> failure x
   Latte.Abs.ELitArr _ exprs -> failure x
+  Latte.Abs.ELitNull _ ident -> failure x
   Latte.Abs.EApp _ var exprs -> failure x
   Latte.Abs.EString _ string -> failure x
   Latte.Abs.Neg _ expr -> failure x

@@ -242,6 +242,7 @@ instance Print (Latte.Abs.Expr' a) where
     Latte.Abs.ELitTrue _ -> prPrec i 6 (concatD [doc (showString "true")])
     Latte.Abs.ELitFalse _ -> prPrec i 6 (concatD [doc (showString "false")])
     Latte.Abs.ELitArr _ exprs -> prPrec i 6 (concatD [doc (showString "["), prt 0 exprs, doc (showString "]")])
+    Latte.Abs.ELitNull _ id_ -> prPrec i 6 (concatD [doc (showString "("), prt 0 id_, doc (showString ")null")])
     Latte.Abs.EApp _ var exprs -> prPrec i 6 (concatD [prt 0 var, doc (showString "("), prt 0 exprs, doc (showString ")")])
     Latte.Abs.EString _ str -> prPrec i 6 (concatD [printString str])
     Latte.Abs.Neg _ expr -> prPrec i 5 (concatD [doc (showString "-"), prt 6 expr])
