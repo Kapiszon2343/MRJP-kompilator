@@ -166,8 +166,11 @@ checkClass' envLoc (elem:tail) elems = do
     modifyMem (Data.Map.insert loc tp)
     local (first $ Data.Map.insert ident loc) (checkClass' (Data.Map.insert ident loc envLoc) tail elems)
 
-checkClass :: Env -> [ClassElem] -> TypeCheckerMonad ()
-checkClass env elems = local (const env) (checkClass' Data.Map.empty elems elems)
+checkClass :: Env -> Ident -> [ClassElem] -> TypeCheckerMonad ()
+checkClass env ident elems = do
+    loc <- newloc
+    modifyMem (Data.Map.insert loc (Class Nothing ident))
+    local (const (first (Data.Map.insert (Ident "self") loc) env)) (checkClass' (Data.Map.singleton (Ident "self") loc) elems elems)
 
 makeArray :: [Expr] -> Type -> BNFC'Position -> TypeCheckerMonad Type
 makeArray [] retTp _ = return retTp
@@ -421,7 +424,7 @@ runTopDefs ((FnDef pos ret ident args block):tail) = do
     runTopDefs tail
 runTopDefs ((ClassDef pos ident elems):tail) = do
     env <- ask
-    checkClass env elems 
+    checkClass env ident elems 
     runTopDefs tail
 
 formClass :: [ClassElem] -> TypeCheckerMonad ClassForm
