@@ -10,9 +10,13 @@ import qualified Data.Bifunctor
 import Text.Read (readMaybe)
 import Data.Array (Array)
 
+type ClassForm = (Data.Map.Map Ident (Type, Int), Int)
+type EnvLoc = Data.Map.Map Ident Loc
+type EnvClass = Data.Map.Map Ident ClassForm
+
 type Index = Integer
 type Loc = Int
-type Env = Data.Map.Map Ident Loc
+type Env = (EnvLoc, EnvClass)
 
 type BuiltInFunction = (Ident, Type, StringBuilder)
 

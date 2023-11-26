@@ -34,8 +34,8 @@ nextIdent = do
 
 getLoc :: BNFC'Position -> Ident -> InterpreterMonad Loc 
 getLoc pos ident = do
-    env <- ask
-    case Data.Map.lookup ident env of
+    (envLoc, envClass) <- ask
+    case Data.Map.lookup ident envLoc of
         Just loc -> return loc
         Nothing -> throwError ("undefined variable " ++ show ident ++ " at " ++ show pos)
 

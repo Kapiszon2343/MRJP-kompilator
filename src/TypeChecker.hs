@@ -2,13 +2,28 @@ module TypeChecker where
 
 import Data.Map
 import Data.Maybe (fromMaybe)
-import Data.Bifunctor ( first )
+import Data.Bifunctor ( first, Bifunctor (bimap) )
 import Control.Monad.State
 import Control.Monad.Reader ( MonadReader(local, ask), ReaderT, asks )
 import Control.Monad.Except
 
 import Latte.Abs
 import Common
+    ( builtInFunctions,
+      preEval,
+      argToIdent,
+      argToType,
+      showIdent,
+      showVar,
+      showType,
+      typePos,
+      showPos,
+      BuiltInFunction,
+      Val(ValBool),
+      Loc,
+      Env,
+      ClassForm,
+      EnvLoc )
 import qualified Latte.Abs as Data.Map
 
 matchTypesExprs :: BNFC'Position -> [Type] -> [Expr] -> TypeCheckerMonad ()
@@ -30,6 +45,7 @@ matchType (Fun _ ret1 []) (Fun _ ret2 []) = matchType ret1 ret2
 matchType (Fun pos1 ret1 (arg1:args1)) (Fun pos2 ret2 (arg2:args2)) = 
     matchType arg1 arg2 && matchType (Fun pos1 ret1 args1) (Fun pos2 ret2 args2)
 matchType (Array _ tp1) (Array _ tp2) = matchType tp1 tp2
+matchType (Class _ (Ident str1)) (Class _ (Ident str2)) = str1 == str2
 matchType _ _ = False
 
 matchTypes :: Type' a -> [Type' a] -> Bool
@@ -53,7 +69,7 @@ confirmRetType tp1 (DoRet tp2) = if matchType tp1 tp2
 data RetType
     = DoRet Type
     | NoRet
-type Ret = (Env -> Env, RetType)
+type Ret = (EnvLoc -> EnvLoc, RetType)
 
 type Mem = Data.Map.Map Loc Type
 type Store = (Mem, Loc)
@@ -72,8 +88,8 @@ modifyMem f =
 
 getLoc :: BNFC'Position -> Ident -> TypeCheckerMonad Loc 
 getLoc pos ident = do 
-    env <- ask
-    case Data.Map.lookup ident env of
+    (locs, _) <- ask
+    case Data.Map.lookup ident locs of
         Nothing -> throwError $ "undefined variable at " ++ showPos pos
         Just ret -> return ret
 
@@ -98,10 +114,19 @@ getVarType (AttrVar pos var ident) = do
         Array _ _ -> if showIdent ident == "length"
             then return $ Int pos
             else throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ " does not have attribute " ++ showIdent ident
-        Class _ _ -> throwError "unimplemented"
+        Class _ classIdent -> do
+            (_, envClass) <- ask
+            let classForm = Data.Map.lookup classIdent envClass
+            case classForm of
+                Just (attrMap, _) -> do
+                    let attr = Data.Map.lookup ident attrMap
+                    case attr of
+                        Just (tp, _) -> return tp
+                        Nothing -> throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ " does not have attribute " ++ showIdent ident
+                Nothing -> throwError $ "Something went horribly wrong!!\n Could not find class " ++ showIdent classIdent ++ "of variable " ++ showVar var ++ " at: " ++ showPos pos
         _ -> throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ "does not have attributes"
 
-checkFunc' ::  BNFC'Position -> Env -> Type -> [Arg] -> Block -> TypeCheckerMonad Type
+checkFunc' ::  BNFC'Position -> EnvLoc -> Type -> [Arg] -> Block -> TypeCheckerMonad Type
 checkFunc' pos blockIdent ret [] block = do
     (_, actualRet) <- typeCheckBlock ret blockIdent block
     case actualRet of
@@ -117,12 +142,33 @@ checkFunc' pos blockIdent ret (arg:args) block = do
         Nothing -> do
             loc <- newloc
             modifyMem (Data.Map.insert loc tp)
-            local (Data.Map.insert ident loc) (checkFunc' pos (Data.Map.insert ident loc blockIdent) ret args block)
+            local (first $ Data.Map.insert ident loc) (checkFunc' pos (Data.Map.insert ident loc blockIdent) ret args block)
 
 checkFunc :: Env -> BNFC'Position -> Type -> [Arg] -> Block -> TypeCheckerMonad Type
 checkFunc env pos ret args block = do
     local (const env) (checkFunc' pos Data.Map.empty ret args block)
-    
+
+checkClass' :: EnvLoc -> [ClassElem] -> [ClassElem] -> TypeCheckerMonad ()
+checkClass' envLoc [] [] = return ()
+checkClass' envLoc [] (elem:elems) = case elem of
+    Attribute pos tp ident -> checkClass' envLoc [] elems
+    Method pos retTp ident args block -> do
+        checkFunc' pos envLoc retTp args block
+        checkClass' envLoc [] elems
+checkClass' envLoc (elem:tail) elems = do
+    loc <- newloc
+    let ident = case elem of
+            Attribute pos tp ident -> ident
+            Method pos retTp ident args block -> ident
+    let tp = case elem of
+            Attribute pos tp ident -> tp
+            Method pos retTp ident args block -> Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args 
+    modifyMem (Data.Map.insert loc tp)
+    local (first $ Data.Map.insert ident loc) (checkClass' (Data.Map.insert ident loc envLoc) tail elems)
+
+checkClass :: Env -> [ClassElem] -> TypeCheckerMonad ()
+checkClass env elems = local (const env) (checkClass' Data.Map.empty elems elems)
+
 makeArray :: [Expr] -> Type -> BNFC'Position -> TypeCheckerMonad Type
 makeArray [] retTp _ = return retTp
 makeArray (expr:tail) retTp pos = do
@@ -163,6 +209,7 @@ eval (ELitArr pos (expr:tail)) = do
 eval (ELitInt pos integer) = return (Int pos)
 eval (ELitTrue pos) = return (Bool pos)
 eval (ELitFalse pos) = return (Bool pos)
+eval (ELitNull pos ident) = return (Class pos ident) -- TODO check if class exists
 eval (EApp pos var params) =  do
     func <- getVarType var
     case func of
@@ -216,23 +263,14 @@ eval (ERel pos expr1 op expr2) = do
         (Int _) -> if matchType tp2 (Int pos)
             then return (Bool pos)
             else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
-        (Bool _) -> case op of
-            (EQU _) -> if matchType tp2 (Bool pos)
+        _ -> case op of
+            (EQU _) -> if matchType tp1 tp2
                 then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
-            (NE _) -> if matchType tp2 (Bool pos)
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp1 ++ "\nActual: " ++ showType tp2
+            (NE _) -> if matchType tp1 tp2
                 then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp1 ++ "\nActual: " ++ showType tp2
             _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
-        (Str _) -> case op of
-            (EQU _) -> if matchType tp2 (Str pos)
-                then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
-            (NE _) -> if matchType tp2 (Str pos)
-                then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
-            _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
-        _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int, bool or string\nActual: " ++ showType tp2
 eval (EAnd pos expr1 expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
@@ -250,7 +288,7 @@ eval (EOr pos expr1 expr2) = do
             else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp1
 
-evalItems :: Env -> Type -> [Item] -> TypeCheckerMonad [(Ident, Loc)]
+evalItems :: EnvLoc -> Type -> [Item] -> TypeCheckerMonad [(Ident, Loc)]
 evalItems _blockIdent _def [] = return []
 evalItems blockIdent tp ((NoInit pos ident):items) = do
     case Data.Map.lookup ident blockIdent of
@@ -273,18 +311,19 @@ evalItems blockIdent tp ((Init pos ident expr):items) = do
                     return $ (ident, loc):rets
                 else throwError $ "Wrong assign type at: " ++ showPos pos ++ "\nExpected: " ++ showType evalTp ++ "\nActual: " ++ showType tp
 
-typeCheckBlock' :: RetType -> Type -> Env -> Block -> TypeCheckerMonad Ret 
+typeCheckBlock' :: RetType -> Type -> EnvLoc -> Block -> TypeCheckerMonad Ret 
 typeCheckBlock' ret expectedTyp _ (Block _ []) = do return (id, ret)
 typeCheckBlock' ret expectedType blockIdent (Block pos (stmt:block)) = do
-    (envMod, newRet) <- typeCheck expectedType blockIdent stmt
+    (envLocMod, newRet) <- typeCheck expectedType blockIdent stmt
+    let envMod (envLoc, envClass) = (envLocMod envLoc, envClass)
     case ret of
-        NoRet -> local envMod (typeCheckBlock' newRet expectedType (envMod blockIdent) (Block pos block))
-        DoRet _ -> local envMod (typeCheckBlock' ret expectedType (envMod blockIdent) (Block pos block))
+        NoRet -> local envMod (typeCheckBlock' newRet expectedType (envLocMod blockIdent) (Block pos block))
+        DoRet _ -> local envMod (typeCheckBlock' ret expectedType (envLocMod blockIdent) (Block pos block))
 
-typeCheckBlock :: Type -> Env -> Block -> TypeCheckerMonad Ret 
+typeCheckBlock :: Type -> EnvLoc -> Block -> TypeCheckerMonad Ret 
 typeCheckBlock = typeCheckBlock' NoRet
 
-typeCheck :: Type -> Env -> Stmt -> TypeCheckerMonad Ret
+typeCheck :: Type -> EnvLoc -> Stmt -> TypeCheckerMonad Ret
 typeCheck expectedType _ (Empty pos) = do return (id, NoRet)
 typeCheck expectedType _ (BStmt bStmtPos block) = 
     typeCheckBlock expectedType Data.Map.empty block
@@ -349,12 +388,12 @@ typeCheck expectedType _ (For pos valType ident exprSet exprCond incrStmt loopSt
     tpSet <- eval exprSet
     if matchType tpSet valType 
         then do
-            tpCond <- local (Data.Map.insert ident iterLoc) (eval exprCond)
+            tpCond <- local (first $ Data.Map.insert ident iterLoc) (eval exprCond)
             if matchType tpCond (Bool Nothing)
                 then do
-                    local (Data.Map.insert ident iterLoc) 
+                    local (first $ Data.Map.insert ident iterLoc) 
                         (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) incrStmt)
-                    local (Data.Map.insert ident iterLoc) 
+                    local (first $ Data.Map.insert ident iterLoc) 
                         (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) loopStmt)
                 else throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tpCond
         else throwError $ "Wrong expression type at: " ++ showPos pos ++ "\nExpected: " ++ showType valType ++ "\nActual: " ++ showType tpSet
@@ -365,7 +404,7 @@ typeCheck expectedType _ (ForEach pos valType ident expr loopStmt) = do
             then do
                 loc <- newloc
                 modifyMem $ Data.Map.insert loc valType
-                local (Data.Map.insert ident loc) 
+                local (first $ Data.Map.insert ident loc) 
                     (typeCheck expectedType (Data.Map.insert ident loc Data.Map.empty) loopStmt)
             else throwError $ "Created type does not match assignment at: " ++ showPos pos ++ "\tExpected: " ++ showType valType ++ "\nActual: " ++ showType tp
         _ -> throwError $ "Foreach requires array to iterate through at: " ++ showPos pos
@@ -380,17 +419,44 @@ runTopDefs ((FnDef pos ret ident args block):tail) = do
     env <- ask
     checkFunc env pos ret args block
     runTopDefs tail
+runTopDefs ((ClassDef pos ident elems):tail) = do
+    env <- ask
+    checkClass env elems 
+    runTopDefs tail
+
+formClass :: [ClassElem] -> TypeCheckerMonad ClassForm
+formClass [] = return (Data.Map.empty, 0)
+formClass (elem:elems) = do
+    (attrMap, size) <- formClass elems
+    case elem of
+        Attribute pos tp ident -> case Data.Map.lookup ident attrMap of
+            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+            Nothing -> return (Data.Map.insert ident (tp, 4) attrMap, size + 4)
+        Method pos retTp ident args block -> case Data.Map.lookup ident attrMap of
+            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+            Nothing -> return (
+                Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, 4) attrMap, 
+                size + 4)
 
 addTopDefs :: [TopDef] -> [TopDef] -> TypeCheckerMonad (IO ())
 addTopDefs [] topDefs2 = runTopDefs topDefs2
 addTopDefs ((FnDef pos ret ident args _block):lst) topDefs2 = do
-    env <- ask
-    case Data.Map.lookup ident env of
+    (envLoc, envClass) <- ask
+    case Data.Map.lookup ident envLoc of
         Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
         Nothing -> do
             loc <- newloc
             modifyMem (Data.Map.insert loc (Fun pos ret (Prelude.map argToType args)))
-            local (Data.Map.insert ident loc) (addTopDefs lst topDefs2)
+            local (first $ Data.Map.insert ident loc) (addTopDefs lst topDefs2)
+addTopDefs ((ClassDef pos ident elems):lst) topDefs2 = do
+    (envLoc, envClass) <- ask
+    case Data.Map.lookup ident envLoc of
+        Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+        Nothing -> do
+            loc <- newloc
+            modifyMem (Data.Map.insert loc (Class pos ident))
+            classForm <- formClass elems
+            local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident classForm)) (addTopDefs lst topDefs2)
 
 addBuildIntFunctions :: [BuiltInFunction] -> Program -> TypeCheckerMonad (IO ())
 addBuildIntFunctions [] (Program pos topDefs) = addTopDefs topDefs topDefs
@@ -398,7 +464,7 @@ addBuildIntFunctions ((ident, tp, _):functions) program = do
     env <- ask
     loc <- newloc
     modifyMem (Data.Map.insert loc tp)
-    local (Data.Map.insert ident loc) (addBuildIntFunctions functions program)
+    local (first $ Data.Map.insert ident loc) (addBuildIntFunctions functions program)
 
 typeCheckProgram :: Program -> TypeCheckerMonad (IO ())
 typeCheckProgram = addBuildIntFunctions builtInFunctions
