@@ -15,7 +15,7 @@ import System.Exit
 
 runCompiler :: Program -> String -> String -> IO ()
 runCompiler program filePath fileName = do
-    case evalState (runReaderT (runExceptT $ typeCheckProgram program) (Data.Map.empty, Data.Map.empty)) (Data.Map.empty, 0) of
+    case typeCheckProgram program of
         Left mess -> do
             hPutStrLn stderr $ "ERROR\n" ++ mess
             exitFailure

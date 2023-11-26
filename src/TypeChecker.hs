@@ -4,7 +4,7 @@ import Data.Map
 import Data.Maybe (fromMaybe)
 import Data.Bifunctor ( first, Bifunctor (bimap) )
 import Control.Monad.State
-import Control.Monad.Reader ( MonadReader(local, ask), ReaderT, asks )
+import Control.Monad.Reader
 import Control.Monad.Except
 
 import Latte.Abs
@@ -469,5 +469,5 @@ addBuildIntFunctions ((ident, tp, _):functions) program = do
     modifyMem (Data.Map.insert loc tp)
     local (first $ Data.Map.insert ident loc) (addBuildIntFunctions functions program)
 
-typeCheckProgram :: Program -> TypeCheckerMonad (IO ())
-typeCheckProgram = addBuildIntFunctions builtInFunctions
+typeCheckProgram :: Program -> Either String (IO ())
+typeCheckProgram program = evalState (runReaderT (runExceptT $ addBuildIntFunctions builtInFunctions program) (Data.Map.singleton (Ident "self") 0, Data.Map.empty)) (Data.Map.empty, 1)
