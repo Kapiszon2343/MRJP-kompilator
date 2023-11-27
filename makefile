@@ -1,4 +1,4 @@
 all: latte
 
 latte: 
-	cabal install --installdir=.
+	cabal install --installdir=. --overwrite-policy=always
