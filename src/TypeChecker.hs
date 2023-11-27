@@ -25,6 +25,7 @@ import Common
       ClassForm,
       EnvLoc )
 import qualified Latte.Abs as Data.Map
+import Data.Bool (bool)
 
 matchTypesExprs :: BNFC'Position -> [Type] -> [Expr] -> TypeCheckerMonad ()
 matchTypesExprs _pos [] [] = return ()
@@ -32,39 +33,56 @@ matchTypesExprs pos (_:_) [] = throwError $ "not enough arguments at " ++ showPo
 matchTypesExprs pos [] (_:_) = throwError $ "too many arguments at " ++ showPos pos
 matchTypesExprs inPos (tp:tps) (expr:exprs) = do
     exprTp <- eval expr
-    if matchType tp exprTp
+    bol <- matchType tp exprTp
+    if bol
         then matchTypesExprs inPos tps exprs
         else throwError $ "Mismatched types at " ++ showPos (typePos exprTp) ++ "\nExpected: " ++ showType tp ++ "\nActual: " ++ showType exprTp
 
-matchType :: Type' a -> Type' a -> Bool
-matchType (Int _) (Int _) = True
-matchType (Str _) (Str _) = True
-matchType (Bool _) (Bool _) = True
-matchType (Void _) (Void _) = True
+matchType :: Type' a -> Type' a -> TypeCheckerMonad Bool
+matchType (Int _) (Int _) = return True
+matchType (Str _) (Str _) = return True
+matchType (Bool _) (Bool _) = return True
+matchType (Void _) (Void _) = return True
 matchType (Fun _ ret1 []) (Fun _ ret2 []) = matchType ret1 ret2
-matchType (Fun pos1 ret1 (arg1:args1)) (Fun pos2 ret2 (arg2:args2)) = 
-    matchType arg1 arg2 && matchType (Fun pos1 ret1 args1) (Fun pos2 ret2 args2)
+matchType (Fun pos1 ret1 (arg1:args1)) (Fun pos2 ret2 (arg2:args2)) = do
+    argBol <- matchType arg1 arg2 
+    if argBol 
+        then matchType (Fun pos1 ret1 args1) (Fun pos2 ret2 args2)
+        else return False
 matchType (Array _ tp1) (Array _ tp2) = matchType tp1 tp2
-matchType (Class _ (Ident str1)) (Class _ (Ident str2)) = str1 == str2
-matchType _ _ = False
+matchType (Class pos1 (Ident str1)) (Class pos2 (Ident str2)) =
+    if str1 == str2
+        then return True
+        else do
+            (_, classEnv) <- ask
+            case Data.Map.lookup (Ident str2) classEnv of
+                Just (_, parentIdent) -> matchType (Class pos1 (Ident str1)) (Class pos2 parentIdent)
+                Nothing -> return False
+matchType _ _ = return False
 
-matchTypes :: Type' a -> [Type' a] -> Bool
-matchTypes _ [] = True
-matchTypes tpBase (tp:tail) = matchType tpBase tp && matchTypes tpBase tail
+matchTypes :: Type' a -> [Type' a] -> TypeCheckerMonad Bool
+matchTypes _ [] = return True
+matchTypes tpBase (tp:tail) = do
+    bol <- matchType tpBase tp 
+    if bol
+        then matchTypes tpBase tail
+        else return False
 
-matchTypeRet :: Type -> RetType -> Bool
+matchTypeRet :: Type -> RetType -> TypeCheckerMonad Bool
 matchTypeRet tp1 (DoRet tp2) = matchType tp1 tp2
-matchTypeRet _ NoRet = False
+matchTypeRet _ NoRet = return False
 
-matchTypeBlock :: Type -> RetType -> Bool
+matchTypeBlock :: Type -> RetType -> TypeCheckerMonad Bool
 matchTypeBlock tp1 (DoRet tp2) = matchType tp1 tp2
-matchTypeBlock _ NoRet = True
+matchTypeBlock _ NoRet = return True
 
 confirmRetType :: Type -> RetType -> TypeCheckerMonad RetType
 confirmRetType tp NoRet = return NoRet
-confirmRetType tp1 (DoRet tp2) = if matchType tp1 tp2
-    then return (DoRet tp1)
-    else throwError ("Invalid return type: " ++ showType tp2 ++ ", Expected: " ++ showType tp1)
+confirmRetType tp1 (DoRet tp2) = do
+    bol <- matchType tp1 tp2
+    if bol
+        then return (DoRet tp1)
+        else throwError ("Invalid return type: " ++ showType tp2 ++ ", Expected: " ++ showType tp1)
 
 data RetType
     = DoRet Type
@@ -118,7 +136,7 @@ getVarType (AttrVar pos var ident) = do
             (_, envClass) <- ask
             let classForm = Data.Map.lookup classIdent envClass
             case classForm of
-                Just (attrMap, _) -> do
+                Just ((attrMap, _),_) -> do
                     let attr = Data.Map.lookup ident attrMap
                     case attr of
                         Just (tp, _) -> return tp
@@ -206,7 +224,8 @@ eval (ELitArr pos []) = throwError $ "Cannot initialize empty array due to ambig
 eval (ELitArr pos (expr:tail)) = do
     tpBase <- eval expr
     tpTail <- evalArr tail
-    if matchTypes tpBase tpTail
+    bol <- matchTypes tpBase tpTail
+    if bol
         then return (Array pos tpBase)
         else throwError $ "Array elements need to have the same type at: " ++ showPos pos
 eval (ELitInt pos integer) = return (Int pos)
@@ -223,39 +242,52 @@ eval (EApp pos var params) =  do
 eval (EString pos string) = return (Str pos)
 eval (Neg pos expr) = do
     tp <- eval expr
-    if matchType tp (Int pos)
+    bol <- matchType tp (Int pos)
+    if bol
         then return (Int pos)
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp
 eval (Not pos expr) = do
     tp <- eval expr
-    if matchType tp (Bool pos)
+    bol <- matchType tp (Bool pos)
+    if bol
         then return (Bool pos)
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp
 eval (EMul pos expr1 op expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
-    if matchType tp1 (Int pos)
-        then if matchType tp2 (Int pos)
-            then return (Int pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
+    bol1 <- matchType tp1 (Int pos)
+    if bol1
+        then do
+            bol2 <- matchType tp2 (Int pos)
+            if bol2
+                then return (Int pos)
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp1
 eval (EAdd pos expr1 op expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
     case op of
         (Plus _) -> case tp1 of
-            (Int _) -> if matchType tp2 (Int pos)
-                then return (Int pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
-            (Str _) -> if matchType tp2 (Str pos)
+            (Int _) -> do 
+                bol <- matchType tp2 (Int pos)
+                if bol
+                    then return (Int pos)
+                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
+            (Str _) -> do
+                bol <- matchType tp2 (Str pos)
+                if bol
                     then return (Str pos)
                     else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: string\nActual: " ++ showType tp2
             _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int or string\nActual: " ++ showType tp1
         (Minus _) -> case tp1 of
-            (Int _) -> if matchType tp2 (Int pos)
-                then return (Int pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
-            (Str _) -> if matchType tp2 (Str pos)
+            (Int _) -> do
+                bol <- matchType tp2 (Int pos)
+                if bol
+                    then return (Int pos)
+                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
+            (Str _) -> do 
+                bol <- matchType tp2 (Str pos)
+                if bol
                     then return (Str pos)
                     else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
             _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp1
@@ -263,32 +295,44 @@ eval (ERel pos expr1 op expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
     case tp1 of
-        (Int _) -> if matchType tp2 (Int pos)
-            then return (Bool pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
+        (Int _) -> do 
+            bol <- matchType tp2 (Int pos)
+            if bol
+                then return (Bool pos)
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp2
         _ -> case op of
-            (EQU _) -> if matchType tp1 tp2
-                then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp1 ++ "\nActual: " ++ showType tp2
-            (NE _) -> if matchType tp1 tp2
-                then return (Bool pos)
-                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp1 ++ "\nActual: " ++ showType tp2
+            (EQU _) -> do 
+                bol <- matchType tp1 tp2
+                if bol
+                    then return (Bool pos)
+                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp1 ++ "\nActual: " ++ showType tp2
+            (NE _) -> do 
+                bol <- matchType tp1 tp2
+                if bol
+                    then return (Bool pos)
+                    else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp1 ++ "\nActual: " ++ showType tp2
             _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
 eval (EAnd pos expr1 expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
-    if matchType tp1 (Bool pos)
-        then if matchType tp2 (Bool pos)
-            then return (Bool pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
+    bol1 <- matchType tp1 (Bool pos)
+    if bol1
+        then do 
+            bol2 <- matchType tp2 (Bool pos)
+            if bol2
+                then return (Bool pos)
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp1
 eval (EOr pos expr1 expr2) = do
     tp1 <- eval expr1
     tp2 <- eval expr2
-    if matchType tp1 (Bool pos)
-        then if matchType tp2 (Bool pos)
-            then return (Bool pos)
-            else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
+    bol1 <- matchType tp1 (Bool pos)
+    if bol1
+        then do 
+            bol2 <- matchType tp2 (Bool pos)
+            if bol2
+                then return (Bool pos)
+                else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp1
 
 evalItems :: EnvLoc -> Type -> [Item] -> TypeCheckerMonad [(Ident, Loc)]
@@ -306,7 +350,8 @@ evalItems blockIdent tp ((Init pos ident expr):items) = do
         Just _ -> throwError $ "Multiple definitions of same name at: " ++ showPos pos
         Nothing -> do
             evalTp <- eval expr
-            if matchType tp evalTp
+            bol <- matchType tp evalTp
+            if bol
                 then do
                     loc <- newloc
                     rets <- evalItems (Data.Map.insert ident loc blockIdent) tp items
@@ -336,30 +381,37 @@ typeCheck expectedType blockIdent (Decl pos valType items) = do
 typeCheck expectedType _ (Ass pos var expr) = do 
     exprTp <- eval expr
     tp <- getVarType var
-    if matchType tp exprTp
+    bol <- matchType tp exprTp
+    if bol
         then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType tp ++ "\nActual: " ++ showType exprTp
 typeCheck expectedType _ (Incr pos var) = do 
     tp <- getVarType var
-    if matchType tp (Int pos)
+    bol <- matchType tp (Int pos)
+    if bol
         then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: " ++ showType tp
 typeCheck expectedType _ (Decr pos var) = do 
     tp <- getVarType var
-    if matchType tp (Int pos)
+    bol <- matchType tp (Int pos)
+    if bol
         then return (id, NoRet)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: " ++ showType tp
 typeCheck expectedType _ (Ret pos expr) = do 
     tp <- eval expr
-    if matchType tp expectedType
+    bol <- matchType tp expectedType
+    if bol
         then return (id, DoRet tp)
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: " ++ showType tp
-typeCheck expectedType _ (VRet pos) = if matchType (Void pos) expectedType
+typeCheck expectedType _ (VRet pos) = do 
+    bol <- matchType (Void pos) expectedType
+    if bol
         then return (id, DoRet (Void pos))
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: Void"
 typeCheck expectedType blockIdent (Cond pos expr stmtTrue) = do
     tp <- eval expr
-    if matchType tp (Bool pos)
+    bol <- matchType tp (Bool pos)
+    if bol
         then do
             (_, retTrue) <- typeCheck expectedType blockIdent stmtTrue
             case preEval expr of
@@ -368,7 +420,8 @@ typeCheck expectedType blockIdent (Cond pos expr stmtTrue) = do
         else throwError $ "Wrong return type at: " ++ showPos pos ++ "\nExpected: " ++ showType expectedType ++ "\nActual: " ++ showType tp
 typeCheck expectedType blockIdent (CondElse pos expr stmtTrue stmtFalse) = do
     tp <- eval expr
-    if matchType tp (Bool pos)
+    bol <- matchType tp (Bool pos)
+    if bol
         then do 
             (_, retTrue) <- typeCheck expectedType blockIdent stmtTrue
             (_, retFalse) <- typeCheck expectedType blockIdent stmtFalse
@@ -389,10 +442,12 @@ typeCheck expectedType _ (For pos valType ident exprSet exprCond incrStmt loopSt
     iterLoc <- newloc
     modifyMem $ Data.Map.insert iterLoc valType
     tpSet <- eval exprSet
-    if matchType tpSet valType 
+    bol1 <- matchType tpSet valType
+    if bol1 
         then do
             tpCond <- local (first $ Data.Map.insert ident iterLoc) (eval exprCond)
-            if matchType tpCond (Bool Nothing)
+            bol2 <- matchType tpCond (Bool Nothing)
+            if bol2
                 then do
                     local (first $ Data.Map.insert ident iterLoc) 
                         (typeCheck expectedType (Data.Map.insert ident iterLoc Data.Map.empty) incrStmt)
@@ -403,13 +458,15 @@ typeCheck expectedType _ (For pos valType ident exprSet exprCond incrStmt loopSt
 typeCheck expectedType _ (ForEach pos valType ident expr loopStmt) = do
     val <- eval expr
     case val of
-        (Array _ tp) -> if matchType tp valType
-            then do
-                loc <- newloc
-                modifyMem $ Data.Map.insert loc valType
-                local (first $ Data.Map.insert ident loc) 
-                    (typeCheck expectedType (Data.Map.insert ident loc Data.Map.empty) loopStmt)
-            else throwError $ "Created type does not match assignment at: " ++ showPos pos ++ "\tExpected: " ++ showType valType ++ "\nActual: " ++ showType tp
+        (Array _ tp) -> do
+            bol <- matchType tp valType
+            if bol
+                then do
+                    loc <- newloc
+                    modifyMem $ Data.Map.insert loc valType
+                    local (first $ Data.Map.insert ident loc) 
+                        (typeCheck expectedType (Data.Map.insert ident loc Data.Map.empty) loopStmt)
+                else throwError $ "Created type does not match assignment at: " ++ showPos pos ++ "\tExpected: " ++ showType valType ++ "\nActual: " ++ showType tp
         _ -> throwError $ "Foreach requires array to iterate through at: " ++ showPos pos
 typeCheck expectedType _ (SExp pos expr) = do
     eval expr
@@ -426,20 +483,35 @@ runTopDefs ((ClassDef pos ident elems):tail) = do
     env <- ask
     checkClass env ident elems 
     runTopDefs tail
+runTopDefs ((ClassExt pos classIdent _parentIdent elems):tail) = do
+    env <- ask
+    checkClass env classIdent elems 
+    runTopDefs tail
 
-formClass :: [ClassElem] -> TypeCheckerMonad ClassForm
-formClass [] = return (Data.Map.empty, 0)
-formClass (elem:elems) = do
+formClass' :: ClassForm -> [ClassElem] -> TypeCheckerMonad ClassForm
+formClass' form [] = return form
+formClass' form (elem:elems) = do
     (attrMap, size) <- formClass elems
     case elem of
         Attribute pos tp ident -> case Data.Map.lookup ident attrMap of
             Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
-            Nothing -> return (Data.Map.insert ident (tp, 4) attrMap, size + 4)
+            Nothing -> formClass' (Data.Bifunctor.bimap (Data.Map.insert ident (tp, 8)) (+8) form) elems
         Method pos retTp ident args block -> case Data.Map.lookup ident attrMap of
             Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
-            Nothing -> return (
-                Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, 4) attrMap, 
-                size + 4)
+            Nothing -> formClass' (Data.Bifunctor.bimap
+                (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, 8))
+                (+8)
+                form) elems
+
+formClass :: [ClassElem] -> TypeCheckerMonad ClassForm
+formClass = formClass' (Data.Map.empty, 0)
+
+extendClass :: BNFC'Position -> Ident -> [ClassElem] -> TypeCheckerMonad ClassForm
+extendClass pos parentIdent elems = do
+    (_, classEnv) <- ask
+    case Data.Map.lookup parentIdent classEnv of
+        Just (form,_) -> formClass' form elems
+        Nothing -> throwError $ "Parent class " ++ showIdent parentIdent ++ " not found at: " ++ showPos pos
 
 addTopDefs :: [TopDef] -> [TopDef] -> TypeCheckerMonad (IO ())
 addTopDefs [] topDefs2 = runTopDefs topDefs2
@@ -459,7 +531,16 @@ addTopDefs ((ClassDef pos ident elems):lst) topDefs2 = do
             loc <- newloc
             modifyMem (Data.Map.insert loc (Class pos ident))
             classForm <- formClass elems
-            local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident classForm)) (addTopDefs lst topDefs2)
+            local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident (classForm, Ident ""))) (addTopDefs lst topDefs2)
+addTopDefs ((ClassExt pos classIdent parentIdent elems):lst) topDefs2 = do
+    (envLoc, envClass) <- ask
+    case Data.Map.lookup classIdent envLoc of
+        Just _ -> throwError $ "Multiple definitions of: " ++ showIdent classIdent ++ "  at: " ++ showPos pos
+        Nothing -> do
+            loc <- newloc
+            modifyMem (Data.Map.insert loc (Class pos classIdent))
+            classForm <- extendClass pos parentIdent elems
+            local (Data.Bifunctor.bimap (Data.Map.insert classIdent loc) (Data.Map.insert classIdent (classForm, parentIdent))) (addTopDefs lst topDefs2)
 
 addBuildIntFunctions :: [BuiltInFunction] -> Program -> TypeCheckerMonad (IO ())
 addBuildIntFunctions [] (Program pos topDefs) = addTopDefs topDefs topDefs

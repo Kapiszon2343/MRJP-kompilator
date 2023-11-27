@@ -12,7 +12,7 @@ import Data.Array (Array)
 
 type ClassForm = (Data.Map.Map Ident (Type, Int), Int)
 type EnvLoc = Data.Map.Map Ident Loc
-type EnvClass = Data.Map.Map Ident ClassForm
+type EnvClass = Data.Map.Map Ident (ClassForm, Ident)
 
 type Index = Integer
 type Loc = Int
