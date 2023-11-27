@@ -42,7 +42,7 @@ run :: Verbosity -> ParseFun Program -> String -> String -> String -> IO ()
 run v p filePath fileName s =
   case p ts of
     Left err -> do
-      hPutStrLn stderr "ERROR\n"
+      hPutStrLn stderr "ERROR"
       hPutStrLn stderr err
       -- putStrLn "\nParse              Failed...\n"
       -- putStrV v "Tokens:"
