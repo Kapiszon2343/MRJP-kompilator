@@ -12,6 +12,7 @@ import Data.Either
 import Latte.Abs
 import System.IO (hPutStrLn, stderr)
 import System.Exit
+import Common (StringBuilder(..))
 
 runCompiler :: Program -> String -> String -> IO ()
 runCompiler program filePath fileName = do
@@ -21,7 +22,7 @@ runCompiler program filePath fileName = do
             exitFailure
         Right _ -> do
             hPutStrLn stderr "OK\n"
-            res <- evalStateT (runReaderT (runExceptT $ compileProgram program) (Data.Map.empty, Data.Map.empty)) (Data.Map.empty, Data.Map.empty, 0, 0)
+            res <- evalStateT (runReaderT (runExceptT $ compileProgram program) (Data.Map.empty, Data.Map.empty)) (Data.Map.empty, Data.Map.empty, 0, 0, (BLst [], 0))
             case res of
                 Left mess -> do 
                     hPutStrLn stderr $ "ERROR\n" ++ mess

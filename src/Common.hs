@@ -79,7 +79,16 @@ builtInFunctions = [
         ++ "\tmov %rbp, %rsp\n"
         ++ "\tpop %rbp\n"
         ++ "\tret\n"),
-    (Ident "printString", Fun Nothing (Void Nothing) [Str Nothing], BStr ""),
+    (Ident "printString", Fun Nothing (Void Nothing) [Str Nothing], BStr
+        $ "printString:\n"
+        ++ "\tpush %rbp\n"
+        ++ "\tmov %rsp, %rbp\n"
+        ++ "\tsub $32, %rsp\n"
+        ++ "\tcall printf\n"
+        ++ "\tadd $32, %rsp\n"
+        ++ "\tmov %rbp, %rsp\n"
+        ++ "\tpop %rbp\n"
+        ++ "\tret\n"),
     (Ident "error", Fun Nothing (Void Nothing) [], BStr ""),
     (Ident "readInt", Fun Nothing (Int Nothing) [], BStr ""),
     (Ident "readString", Fun Nothing (Str Nothing) [], BStr "")
