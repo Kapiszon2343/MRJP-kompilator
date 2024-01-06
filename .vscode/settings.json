@@ -1,8 +1,10 @@
 {
     "cSpell.words": [
         "alloca",
+        "foldr",
         "Ljava",
         "sdiv",
+        "stmts",
         "taload",
         "tbipush",
         "tgetstatic",
