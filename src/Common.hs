@@ -9,6 +9,7 @@ import Control.Monad.State
 import qualified Data.Bifunctor
 import Text.Read (readMaybe)
 import Data.Array (Array)
+import Data.Maybe
 
 type ClassForm = (Data.Map.Map Ident (Type, Int), Int)
 type EnvLoc = Data.Map.Map Ident Loc
@@ -66,7 +67,18 @@ showVar (AttrVar _ var ident) = showVar var ++ "." ++ showIdent ident
 
 builtInFunctions :: [BuiltInFunction]
 builtInFunctions = [
-    (Ident "printInt", Fun Nothing (Void Nothing) [Int Nothing], BStr ""),
+    (Ident "printInt", Fun Nothing (Void Nothing) [Int Nothing], BStr 
+        $ "printInt:\n"
+        ++ "\tpush %rbp\n"
+        ++ "\tmov %rsp, %rbp\n"
+        ++ "\tsub $32, %rsp\n"
+        ++ "\tmov %rcx, %rdx\n"
+        ++ "\tleaq .printInt(%rip), %rcx\n"
+        ++ "\tcall printf\n"
+        ++ "\tadd $32, %rsp\n"
+        ++ "\tmov %rbp, %rsp\n"
+        ++ "\tpop %rbp\n"
+        ++ "\tret\n"),
     (Ident "printString", Fun Nothing (Void Nothing) [Str Nothing], BStr ""),
     (Ident "error", Fun Nothing (Void Nothing) [], BStr ""),
     (Ident "readInt", Fun Nothing (Int Nothing) [], BStr ""),
@@ -154,11 +166,25 @@ preEval (EOr _pos expr0 expr1) = case preEval expr0 of
 data StringBuilder 
     = BStr String
     | BLst [StringBuilder]
+    | BFil Int
 
-addString :: String -> StringBuilder -> String
-addString baseStr (BStr str) = str ++ baseStr
-addString baseStr (BLst []) = baseStr
-addString baseStr (BLst (builder:lst)) = addString (addString baseStr (BLst lst)) builder
+addString :: String -> Data.Map.Map Int String -> StringBuilder -> String
+addString baseStr mp (BStr str) = str ++ baseStr
+addString baseStr mp (BLst []) = baseStr
+addString baseStr mp (BLst (builder:lst)) = addString (addString baseStr mp (BLst lst)) mp builder
+addString baseStr mp (BFil n) = addString baseStr mp (BStr $ fromMaybe "" $ Data.Map.lookup n mp)
 
 buildString :: StringBuilder -> String
-buildString = addString ""
+buildString = addString "" Data.Map.empty
+
+fillStringBuilder :: Data.Map.Map Int String -> StringBuilder -> StringBuilder
+fillStringBuilder mp (BStr str) = BStr str
+fillStringBuilder mp (BLst []) = BLst []
+fillStringBuilder mp (BLst [builder]) = BLst [fillStringBuilder mp builder]
+fillStringBuilder mp (BLst (builder:lst)) = do
+    let (BLst tail) = fillStringBuilder mp (BLst lst)
+    BLst (fillStringBuilder mp builder:tail)
+fillStringBuilder mp (BFil n) = BStr $ fromMaybe "" $ Data.Map.lookup n mp
+
+fillString :: Data.Map.Map Int String -> StringBuilder -> String
+fillString = addString ""

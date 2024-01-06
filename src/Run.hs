@@ -21,12 +21,11 @@ runCompiler program filePath fileName = do
             exitFailure
         Right _ -> do
             hPutStrLn stderr "OK\n"
-            exitSuccess
-            res <- evalStateT (runReaderT (runExceptT $ compileProgram program) (Data.Map.empty, Data.Map.empty)) (1, 0)
+            res <- evalStateT (runReaderT (runExceptT $ compileProgram program) (Data.Map.empty, Data.Map.empty)) (Data.Map.empty, Data.Map.empty, 0, 0)
             case res of
                 Left mess -> do 
                     hPutStrLn stderr $ "ERROR\n" ++ mess
                     exitFailure
                 Right llvmCode -> do
-                    writeFile (filePath ++ "/" ++ fileName ++ ".ll") llvmCode
-                    callCommand $ "llvm-as -o " ++ filePath ++ "/" ++ fileName ++ ".bc " ++ filePath ++ "/" ++ fileName ++ ".ll"
+                    writeFile (filePath ++ "/" ++ fileName ++ ".s") llvmCode
+                    callCommand $ "gcc " ++ filePath ++ "/" ++ fileName ++ ".s -o" ++ filePath ++ "/" ++ fileName
