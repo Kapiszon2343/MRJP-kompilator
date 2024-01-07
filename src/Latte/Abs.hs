@@ -98,8 +98,8 @@ data Expr' a
     | ELitNull a Ident
     | EApp a (Var' a) [Expr' a]
     | EString a String
-    | Neg a (Expr' a)
-    | Not a (Expr' a)
+    | ENeg a (Expr' a)
+    | ENot a (Expr' a)
     | EMul a (Expr' a) (MulOp' a) (Expr' a)
     | EAdd a (Expr' a) (AddOp' a) (Expr' a)
     | ERel a (Expr' a) (RelOp' a) (Expr' a)
@@ -214,8 +214,8 @@ instance HasPosition Expr where
     ELitNull p _ -> p
     EApp p _ _ -> p
     EString p _ -> p
-    Neg p _ -> p
-    Not p _ -> p
+    ENeg p _ -> p
+    ENot p _ -> p
     EMul p _ _ _ -> p
     EAdd p _ _ _ -> p
     ERel p _ _ _ -> p

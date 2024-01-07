@@ -28,7 +28,7 @@ instance Ord RegLoc where
 type VariableRegisterLoc = Data.Map.Map Ident RegLoc 
 type RegisterLocUse = Data.Map.Map RegLoc [Ident]
 type StringCodes = (StringBuilder, Int)
-type CompilerStore = (VariableRegisterLoc, RegisterLocUse, Loc, Int, StringCodes)
+type CompilerStore = (VariableRegisterLoc, RegisterLocUse, Int, Int, StringCodes)
 
 type VarVal = Integer
 
@@ -53,7 +53,7 @@ showReg 7 = "%rcx"
 showReg r = "%r" ++ show r
 
 showRegLoc (Reg r) = showReg r
-showRegLoc (RSP n) = "[%rsp-" ++ show n ++ "]"
+showRegLoc (RSP n) = "-" ++ show n ++ "(%rsp)"
 
 argRegLoc :: Int -> RegLoc
 argRegLoc n = case n of
@@ -79,16 +79,16 @@ lookupInt k mp = fromMaybe 0 $ Data.Map.lookup k mp
 
 lookupArr k mp = fromMaybe [] $ Data.Map.lookup k mp
 
-newloc :: CompilerMonad Loc
-newloc = do
-    (vrc, rlu, nextLoc, rspSize, strCodes) <- get
-    put (vrc, rlu, nextLoc+1, rspSize, strCodes)
-    return nextLoc
+newLabel :: CompilerMonad String
+newLabel = do
+    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+    put (vrc, rlu, nextLabel+1, rspSize, strCodes)
+    return $ "label_" ++ show nextLabel
 
 getNextStack :: CompilerMonad RegLoc
 getNextStack = do
-    (vrc, rlu, nextLoc, rspSize, strCodes) <- get
-    put (vrc, rlu, nextLoc, rspSize+8, strCodes)
+    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+    put (vrc, rlu, nextLabel, rspSize+8, strCodes)
     return $ RSP rspSize
 
 getFreeReg' :: Reg -> CompilerMonad Reg
@@ -96,7 +96,7 @@ getFreeReg' r = do
     if r > 9
         then throwError "unimplemented"
         else do
-            (vrc, rlu, nextLoc, rspSize, strCodes) <- get
+            (vrc, rlu, nextLabel, rspSize, strCodes) <- get
             case lookupArr (Reg r) rlu of
                 [] -> return r
                 _ -> getFreeReg' (r+1)
@@ -108,22 +108,10 @@ freeReg :: Reg -> CompilerMonad StringBuilder
 freeReg r = do
     -- TODO actually free register
     return $ BStr ""
-    
-
-getLoc :: BNFC'Position -> Ident -> CompilerMonad Loc 
-getLoc pos ident = do
-    (envLoc, envClass) <- ask
-    case Data.Map.lookup ident envLoc of
-        Just loc -> return loc
-        Nothing -> throwError ("undefined variable " ++ show ident ++ " at " ++ show pos)
-
-getIdentLoc :: BNFC'Position -> Ident -> CompilerMonad Loc
-getIdentLoc pos ident = do
-    getLoc pos ident
 
 getIdentRegLoc :: BNFC'Position -> Ident -> CompilerMonad RegLoc
 getIdentRegLoc pos ident = do
-    (vrc, rlu, nextLoc, rspSize, strCodes) <- get
+    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
     case Data.Map.lookup ident vrc of
         Nothing -> throwError ("undefined variable " ++ show ident ++ " at " ++ show pos)
         Just regLoc -> return regLoc
@@ -137,31 +125,48 @@ compileIf :: Expr -> String -> String -> CompilerMonad StringBuilder -- TODO opt
 compileIf (ELitTrue pos) lt lf = return $ BStr $ "\tjmp " ++ lt ++ "\n"
 compileIf (ELitFalse pos) lt lf = return $ BStr $ "\tjmp " ++ lf ++ "\n"
 compileIf (EVar pos var) lt lf = do
-    valRef <- getRef pos ident
+    regLoc <- getVarRegLoc var
     return $ BLst [
-        BStr "\tmov ", valRef, BStr ", %eax\n",
-        BStr $ "\ttest %eax, %eax\n",
+        BStr $ "\tmov " ++ showRegLoc regLoc ++ ", %eax\n",
+        BStr  "\ttest %eax, %eax\n",
         BStr $ "\tjz " ++ lf ++ "\n",
         BStr $ "\tjmp " ++ lt ++ "\n"
         ]
-compileIf (ENot pos expr) lt lf = compileExpr expr lf lt
+compileIf (ENot pos expr) lt lf = compileIf expr lf lt
 compileIf (EOr pos expr0 expr1) lt lf = do
-    lm <- genLabel
-    code0 <- compileExpr expr0 lt lm
-    code1 <- compileExpr expr1 lt lf
+    lm <- newLabel
+    code0 <- compileIf expr0 lt lm
+    code1 <- compileIf expr1 lt lf
     return $ BLst [
         code0,
         BStr $ lm ++ ":\n",
         code1
         ]
 compileIf (EAnd pos expr0 expr1) lt lf = do
-    lm <- genLabel
-    code0 <- compileExpr expr0 lm lf
-    code1 <- compileExpr expr1 lt lf
+    lm <- newLabel
+    code0 <- compileIf expr0 lm lf
+    code1 <- compileIf expr1 lt lf
     return $ BLst [
         code0,
         BStr $ lm ++ ":\n",
         code1
+        ]
+compileIf (ERel pos expr0 op expr1) lt lf = do
+    (code1, r1) <- compileExpr expr0
+    (code2, r2) <- compileExpr expr1
+    let codeJmpTrue = case op of
+            LTH _ -> BStr $ "\tjl " ++ lt ++ "\n"
+            LE _ -> BStr $ "\tjle " ++ lt ++ "\n"
+            GTH _ -> BStr $ "\tjg " ++ lt ++ "\n"
+            GE _ -> BStr $ "\tjge " ++ lt ++ "\n"
+            EQU _ -> BStr $ "\tje " ++ lt ++ "\n"
+            NE _ -> BStr $ "\tjne " ++ lt ++ "\n"
+    return $ BLst [
+            code1,
+            code2,
+            BStr $ "\tcmp " ++ showReg r1 ++ ", " ++ showReg r2 ++ "\n",
+            codeJmpTrue,
+            BStr $ "\tjmp " ++ lf ++ "\n"
         ]
 compileIf _ _ _ = throwError "expected bool"
 
@@ -178,13 +183,13 @@ compileExpr' (ELitTrue pos) r = compileExpr' (ELitInt pos 1) r
 compileExpr' (ELitFalse pos) r = compileExpr' (ELitInt pos 0) r
 compileExpr' (ELitNull pos classIdent) r = compileExpr' (ELitInt pos 0) r
 compileExpr' (EString pos str) r = do
-    (vrc, rlu, nextLoc, rspSize, (strCodes, strCodeNr)) <- get
+    (vrc, rlu, nextLabel, rspSize, (strCodes, strCodeNr)) <- get
     let strLabel = ".str_" ++ show strCodeNr
     let newStrCodes = BLst [
                 strCodes,
                 BStr $ strLabel ++ ": .ascii \"" ++ str ++ "\\0\"\n"
             ]
-    put (vrc, rlu, nextLoc, rspSize, (newStrCodes, strCodeNr+1))
+    put (vrc, rlu, nextLabel, rspSize, (newStrCodes, strCodeNr+1))
     return $ BStr $ "\tleaq " ++ strLabel ++  "(%rip), " ++ showReg r ++ "\n"
 compileExpr' (EAdd pos expr0 op expr1) r = do
     -- TODO opt
@@ -194,17 +199,47 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
         Plus _ -> return $ BStr $ "\tadd " ++ showReg r2 ++ ", " ++ showReg r ++ "\n"
         Minus _ -> return $ BStr $ "\tsub " ++ showReg r2 ++ ", " ++ showReg r ++ "\n"
 compileExpr' (ERel pos expr0 op expr1) r = do
-    -- TODO opt
-    code1 <- compileExpr' expr0 r
-    (code2, r2) <- compileExpr expr1
-    let code3 = "\tcmp " ++ showReg r ++ ", " ++ showReg r2 ++ "\n"
-    case op of
-        LTH _ -> throwError "unimplemented"
-        LE _ -> throwError "unimplemented"
-        GTH _ -> throwError "unimplemented"
-        GE _ -> throwError "unimplemented"
-        EQU _ -> throwError "unimplemented"
-        NE _ -> throwError "unimplemented"
+    lt <- newLabel
+    lf <- newLabel
+    ln <- newLabel
+    codeIf <- compileIf (ERel pos expr0 op expr1) lt lf
+    return $ BLst [
+            codeIf,
+            BStr $ lt ++ ":\n",
+            BStr $ "\tmov $1, " ++ showReg r ++ "\n",
+            BStr $ "\tjmp " ++ ln ++ "\n",
+            BStr $ lf ++ ":\n",
+            BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n",
+            BStr $ ln ++ ":\n"
+        ]
+compileExpr' (EAnd pos expr0 expr1) r = do
+    lt <- newLabel
+    lf <- newLabel
+    ln <- newLabel
+    codeIf <- compileIf (EAnd pos expr0 expr1) lt lf
+    return $ BLst [
+            codeIf,
+            BStr $ lt ++ ":\n",
+            BStr $ "\tmov $1, " ++ showReg r ++ "\n",
+            BStr $ "\tjmp " ++ ln ++ "\n",
+            BStr $ lf ++ ":\n",
+            BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n",
+            BStr $ ln ++ ":\n"
+        ]
+compileExpr' (EOr pos expr0 expr1) r = do
+    lt <- newLabel
+    lf <- newLabel
+    ln <- newLabel
+    codeIf <- compileIf (EOr pos expr0 expr1) lt lf
+    return $ BLst [
+            codeIf,
+            BStr $ lt ++ ":\n",
+            BStr $ "\tmov $1, " ++ showReg r ++ "\n",
+            BStr $ "\tjmp " ++ ln ++ "\n",
+            BStr $ lf ++ ":\n",
+            BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n",
+            BStr $ ln ++ ":\n"
+        ]
 compileExpr' expr r = do
     (code, rr) <- compileExpr expr
     return $ BLst [
@@ -258,8 +293,8 @@ compileExpr (EApp pos var exprs) = do
             rax
         )
 -- compileExpr (EString pos str) = 
-compileExpr (Neg pos expr) = throwError "unimplemented"
-compileExpr (Not pos expr) = throwError "unimplemented"
+compileExpr (ENeg pos expr) = throwError "unimplemented"
+compileExpr (ENot pos expr) = throwError "unimplemented"
 compileExpr (EMul pos expr0 op expr1) = do
     freeReg rax
     freeReg rdx -- freeReg probably does not work in nested expr
@@ -271,8 +306,8 @@ compileExpr (EMul pos expr0 op expr1) = do
         Mod _ -> return (BStr $ "\tidiv " ++ showReg r2 ++ "\n", rdx)
 -- compileExpr (EAdd pos expr0 op expr1) = throwError "unimplemented"
 -- compileExpr (ERel pos expr0 op expr1) = throwError "unimplemented"
-compileExpr (EAnd pos expr0 expr1) = throwError "unimplemented"
-compileExpr (EOr pos expr0 expr1) = throwError "unimplemented"
+-- compileExpr (EAnd pos expr0 expr1) = throwError "unimplemented"
+-- compileExpr (EOr pos expr0 expr1) = throwError "unimplemented"
 compileExpr expr = do
     r <- getFreeReg
     code <- compileExpr' expr r
@@ -293,13 +328,13 @@ compileStmt (Decl _pos tp (decl:decls)) = do
     case decl of
         NoInit pos ident -> do
             regLoc <- getNextStack -- TODO add using registers
-            (vrc, rlu, nextLoc, rspSize, strCodes) <- get
-            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLoc, rspSize, strCodes) -- TODO check if [ident] is correct
+            (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rspSize, strCodes) -- TODO check if [ident] is correct
             compileStmt (Empty pos)
         Init pos ident expr -> do
             regLoc <- getNextStack -- TODO add using registers
-            (vrc, rlu, nextLoc, rspSize, strCodes) <- get
-            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLoc, rspSize, strCodes) -- TODO check if [ident] is correct
+            (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rspSize, strCodes) -- TODO check if [ident] is correct
             (code, reg) <- compileExpr expr
             return $ BLst [
                     code,
@@ -332,9 +367,44 @@ compileStmt (Ret pos expr) = do
             BFil filRetN
         ]
 compileStmt (VRet pos) = return $ BFil filRetN
-compileStmt (Cond pos expr stmt) = throwError "unimplemented"
-compileStmt (CondElse pos expr stmtTrue stmtFalse) = throwError "unimplemented"
-compileStmt (While pos expr stmt) = throwError "unimplemented"
+compileStmt (Cond pos expr stmt) = do
+    labelTrue <- newLabel
+    labelExit <- newLabel
+    codeCond <- compileIf expr labelTrue labelExit
+    codeTrue <- compileStmt stmt
+    return $ BLst [
+            codeCond,
+            BStr $ labelTrue ++ ":\n",
+            codeTrue,
+            BStr $ labelExit ++ ":\n"
+        ]
+compileStmt (CondElse pos expr stmtTrue stmtFalse) = do
+    labelTrue <- newLabel
+    labelFalse <- newLabel
+    labelExit <- newLabel
+    codeCond <- compileIf expr labelTrue labelFalse
+    codeTrue <- compileStmt stmtTrue
+    codeFalse <- compileStmt stmtFalse
+    return $ BLst [
+            codeCond,
+            BStr $ labelTrue ++ ":\n",
+            codeTrue,
+            BStr $ "\tjmp " ++ labelExit ++ "\n",
+            BStr $ labelFalse ++ ":\n",
+            codeFalse,
+            BStr $ labelExit ++ ":\n"
+        ]
+compileStmt (While pos expr stmt) = do
+    labelLoop <- newLabel
+    labelExit <- newLabel
+    codeCond <- compileIf expr labelLoop labelExit
+    codeLoop <- compileStmt stmt
+    return $ BLst [
+            BStr $ labelLoop ++ ":\n",
+            codeLoop,
+            codeCond,
+            BStr $ labelExit ++ ":\n"
+        ]
 compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = throwError "unimplemented"
 compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = throwError "unimplemented"
 compileStmt (SExp pos expr) = do
@@ -344,20 +414,21 @@ compileStmt (SExp pos expr) = do
 addArgs' :: [RegLoc] -> [Arg] -> CompilerMonad ()
 addArgs' _ [] = return ()
 addArgs' (regLoc:regLocs) ((Arg pos tp ident):args) = do
-    (vrc, rlu, nextLoc, rspSize, strCodes) <- get
+    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
     case regLoc of
-        Reg _ -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLoc, rspSize, strCodes)
-        RSP rsp -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLoc, rsp+8, strCodes)
+        Reg _ -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rspSize, strCodes)
+        RSP rsp -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rsp+8, strCodes)
+    addArgs' regLocs args
 
 addArgs = addArgs' argRegLocs
 
 compileTopDefs :: StringBuilder -> [TopDef] -> CompilerMonad StringBuilder
 compileTopDefs code ((FnDef pos tp ident args block):lst) = do
-    (vrc0, rlu0, nextLoc0, rspSizeOld0, strCodes0) <- get
-    put (Data.Map.empty, Data.Map.empty, nextLoc0, 0, strCodes0)
+    (vrc0, rlu0, nextLabel0, rspSizeOld0, strCodes0) <- get
+    put (Data.Map.empty, Data.Map.empty, nextLabel0, 0, strCodes0)
     addArgs args
     currCode <- compileStmt (BStmt pos block)
-    (vrc, rlu, nextLoc, rspSizeOld, strCodes) <- get
+    (vrc, rlu, nextLabel, rspSizeOld, strCodes) <- get
     let rspSize = 32 * div (rspSizeOld + 31) 32
     compileTopDefs (BLst [
             code,

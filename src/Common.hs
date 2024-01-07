@@ -123,10 +123,10 @@ preEval (ELitFalse _pos) = ValBool False
 preEval (ELitArr _pos expr) = ValUndef
 preEval (EApp _pos var expr) = ValUndef
 preEval (EString _pos str) = ValStr str
-preEval (Neg _pos expr) =  case preEval expr of
+preEval (ENeg _pos expr) =  case preEval expr of
     ValInt n -> ValInt $ -n
     _ -> ValUndef
-preEval (Not _pos expr) =  case preEval expr of
+preEval (ENot _pos expr) =  case preEval expr of
     ValBool bol -> ValBool $ not bol
     _ -> ValUndef
 preEval (EMul _pos expr0 op expr1) = case preEval expr0 of

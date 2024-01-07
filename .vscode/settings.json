@@ -8,6 +8,7 @@
         "stmts",
         "taload",
         "tbipush",
+        "tcmp",
         "tgetstatic",
         "tiadd",
         "ticonst",
@@ -18,6 +19,9 @@
         "tinvokevirtual",
         "tistore",
         "tisub",
+        "tjge",
+        "tjle",
+        "tjne",
         "tsipush",
         "vals"
     ]

@@ -240,13 +240,13 @@ eval (EApp pos var params) =  do
             return ret
         _ -> throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected function\nActual: " ++ showType func
 eval (EString pos string) = return (Str pos)
-eval (Neg pos expr) = do
+eval (ENeg pos expr) = do
     tp <- eval expr
     bol <- matchType tp (Int pos)
     if bol
         then return (Int pos)
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: int\nActual: " ++ showType tp
-eval (Not pos expr) = do
+eval (ENot pos expr) = do
     tp <- eval expr
     bol <- matchType tp (Bool pos)
     if bol

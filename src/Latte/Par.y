@@ -245,8 +245,8 @@ Expr6
 
 Expr5 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
 Expr5
-  : '-' Expr6 { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Neg (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
-  | '!' Expr6 { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.Not (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  : '-' Expr6 { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ENeg (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  | '!' Expr6 { (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1), Latte.Abs.ENot (uncurry Latte.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
   | Expr6 { (fst $1, (snd $1)) }
 
 Expr4 :: { (Latte.Abs.BNFC'Position, Latte.Abs.Expr) }
