@@ -19,7 +19,7 @@ type Index = Integer
 type Loc = Int
 type Env = (EnvLoc, EnvClass)
 
-type BuiltInFunction = (Ident, Type, StringBuilder)
+type BuiltInFunction = (Ident, Type, StringBuilder, StringBuilder)
 
 argToType :: Arg -> Type
 argToType (Arg _pos tp _ident) = tp
@@ -78,7 +78,8 @@ builtInFunctions = [
         ++ "\tadd $32, %rsp\n"
         ++ "\tmov %rbp, %rsp\n"
         ++ "\tpop %rbp\n"
-        ++ "\tret\n"),
+        ++ "\tret\n",
+        BStr ".printInt: .ascii \"%d\\n\\0\"\n"),
     (Ident "printString", Fun Nothing (Void Nothing) [Str Nothing], BStr
         $ "printString:\n"
         ++ "\tpush %rbp\n"
@@ -88,10 +89,49 @@ builtInFunctions = [
         ++ "\tadd $32, %rsp\n"
         ++ "\tmov %rbp, %rsp\n"
         ++ "\tpop %rbp\n"
-        ++ "\tret\n"),
-    (Ident "error", Fun Nothing (Void Nothing) [], BStr ""),
-    (Ident "readInt", Fun Nothing (Int Nothing) [], BStr ""),
-    (Ident "readString", Fun Nothing (Str Nothing) [], BStr "")
+        ++ "\tret\n",
+        BStr ""),
+    (Ident "error", Fun Nothing (Void Nothing) [], BStr
+        $ "error:\n"
+        ++ "\tpush %rbp\n"
+        ++ "\tmov %rsp, %rbp\n"
+        ++ "\tsub $32, %rsp\n"
+        ++ "\tleaq .error(%rip), %rcx\n"
+        ++ "\tcall printf\n"
+        ++ "\tmov $60, %eax\n"
+        ++ "\tmov $0, %ebx\n"
+        ++ "\tint $0x80\n",
+        BStr ".error: .ascii \"runtime error\\n\\0\"\n"),
+    (Ident "readInt", Fun Nothing (Int Nothing) [], BStr 
+        $ "readInt:\n"
+        ++ "\tpush %rbp\n"
+        ++ "\tmov %rsp, %rbp\n"
+        ++ "\tsub $32, %rsp\n"
+        ++ "\tleaq .readInt(%rip), %rcx\n"
+        ++ "\tmov %rsp, %rdx\n"
+        ++ "\tcall scanf\n"
+        ++ "\tmov 0(%rsp), %rax\n"
+        ++ "\tadd $32, %rsp\n"
+        ++ "\tmov %rbp, %rsp\n"
+        ++ "\tpop %rbp\n"
+        ++ "\tret\n", 
+        BStr ".readInt: .ascii \"%d\\0\"\n"),
+    (Ident "readString", Fun Nothing (Str Nothing) [], BStr 
+        $ "readString:\n"
+        ++ "\tpush %rbp\n"
+        ++ "\tmov %rsp, %rbp\n"
+        ++ "\tsub $32, %rsp\n"
+        ++ "\tmov $128, %rcx\n"
+        ++ "\tcall malloc\n"
+        ++ "\tleaq .readString(%rip), %rcx\n"
+        ++ "\tmov %rax, %rdx\n"
+        ++ "\tcall scanf\n"
+        ++ "\tmov %rdx, %rax\n"
+        ++ "\tadd $32, %rsp\n"
+        ++ "\tmov %rbp, %rsp\n"
+        ++ "\tpop %rbp\n"
+        ++ "\tret\n", 
+        BStr ".readString: .ascii \"%s\\0\"\n")
     ]
 
 data Val = ValBool Bool

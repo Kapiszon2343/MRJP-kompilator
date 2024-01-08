@@ -143,8 +143,8 @@ compileIf (ELitFalse pos) lt lf = return $ BStr $ "\tjmp " ++ lf ++ "\n"
 compileIf (EVar pos var) lt lf = do
     regLoc <- getVarRegLoc var
     return $ BLst [
-        BStr $ "\tmov " ++ showRegLoc regLoc ++ ", %eax\n",
-        BStr  "\ttest %eax, %eax\n",
+        BStr $ "\tmov " ++ showRegLoc regLoc ++ ", %rax\n",
+        BStr  "\ttest %rax, %rax\n",
         BStr $ "\tjz " ++ lf ++ "\n",
         BStr $ "\tjmp " ++ lt ++ "\n"
         ]
@@ -191,7 +191,15 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
             codeJmpTrue,
             BStr $ "\tjmp " ++ lf ++ "\n"
         ]
-compileIf _ _ _ = throwError "expected bool"
+compileIf expr lt lf = do
+    (code, regLoc) <- compileExpr expr
+    return $ BLst [
+        code,
+        BStr $ "\tmov " ++ showRegLoc regLoc ++ ", %rax\n",
+        BStr  "\ttest %rax, %rax\n",
+        BStr $ "\tjz " ++ lf ++ "\n",
+        BStr $ "\tjmp " ++ lt ++ "\n"
+        ]
 
 compileExpr' :: Expr -> RegLoc -> CompilerMonad StringBuilder
 compileExpr' (EVar pos var) r = do
@@ -220,7 +228,7 @@ compileExpr' (EString pos str) r = do
     let strLabel = ".str_" ++ show strCodeNr
     let newStrCodes = BLst [
                 strCodes,
-                BStr $ strLabel ++ ": .ascii \"" ++ str ++ "\\0\"\n"
+                BStr $ strLabel ++ ": .ascii \"" ++ str ++ "\\n\\0\"\n"
             ]
     put (vrc, rlu, nextLabel, stackState, (newStrCodes, strCodeNr+1))
     case r of
@@ -244,6 +252,10 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                     BStr $ "\tadd " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
                 ]
             (True, Minus _) -> BStr $ "\tsub " ++ showRegLoc r2 ++ ", " ++ showRegLoc r ++ "\n"
+            (False, Minus _) -> BLst [
+                    BStr $ "\tmov " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n",
+                    BStr $ "\tsub " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
+                ]
     return $ BLst [
             code2,
             code1,
@@ -339,21 +351,25 @@ compileExpr (EApp pos var exprs) = do
 compileExpr (ENeg pos expr) = do
     (code, r) <- compileExpr expr
     return (BLst [
-            BStr  "\txor %rax, %rax\n",
+            code,
+            BStr  "\txorq %rax, %rax\n",
             BStr $ "\tsub " ++ showRegLoc r ++ ", %rax\n",
             BStr $ "\tmov %rax, " ++ showRegLoc r ++ "\n"
         ], r)
 compileExpr (ENot pos expr) = do
     (code, r) <- compileExpr expr
-    return (BStr $ "\txor $1, " ++ showRegLoc r ++ "\n"
+    return (BLst [
+            code,
+            BStr $ "\txorq $1, " ++ showRegLoc r ++ "\n"
+        ]
         ,r)
 compileExpr (EMul pos expr0 op expr1) = do
     (code1, r1) <- compileExpr expr0
     (code2, r2) <- compileExpr expr1
     let (codeMul, outReg) = case op of
-            Times _ -> (BStr $ "\timul " ++ showRegLoc r2 ++ "\n", rax)
-            Div _ -> (BStr $ "\tidiv " ++ showRegLoc r2 ++ "\n", rax)
-            Mod _ -> (BStr $ "\tidiv " ++ showRegLoc r2 ++ "\n", rdx)
+            Times _ -> (BStr $ "\timulq " ++ showRegLoc r2 ++ "\n", rax)
+            Div _ -> (BStr $ "\tidivq " ++ showRegLoc r2 ++ "\n", rax)
+            Mod _ -> (BStr $ "\tidivq " ++ showRegLoc r2 ++ "\n", rdx)
     return (BLst [
             code1,
             code2,
@@ -381,7 +397,7 @@ compileStmt (BStmt pos (Block _bPos (stmt:stmts))) = do
         ]
 compileStmt (Decl pos tp []) = compileStmt (Empty pos)
 compileStmt (Decl _pos tp (decl:decls)) = do
-    case decl of
+    codeHead <- case decl of
         NoInit pos ident -> do
             regLoc <- getNextStack -- TODO add using registers
             (vrc, rlu, nextLabel, stackState, strCodes) <- get
@@ -392,10 +408,22 @@ compileStmt (Decl _pos tp (decl:decls)) = do
             (vrc, rlu, nextLabel, stackState, strCodes) <- get
             put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, stackState, strCodes) -- TODO check if [ident] is correct
             compileExpr' expr regLoc
-    compileStmt (Decl _pos tp decls)
+    codeTail <- compileStmt (Decl _pos tp decls)
+    return $ BLst [codeHead, codeTail]
 compileStmt (Ass pos var expr) = do
     regLoc <- getVarRegLoc var
-    compileExpr' expr regLoc
+    (codeExpr, r) <- compileExpr expr
+    let codeSet = case (regLoc, r) of
+            (Reg _, _) -> BStr $ "mov " ++ showRegLoc r ++ ", " ++ showRegLoc regLoc ++ "\n"
+            (_, Reg _) -> BStr $ "mov " ++ showRegLoc r ++ ", " ++ showRegLoc regLoc ++ "\n"
+            _ -> BLst [
+                    BStr $ "mov " ++ showRegLoc r ++ ", " ++ showReg rax ++ "\n",
+                    BStr $ "mov " ++ showReg rax ++ ", " ++ showRegLoc regLoc ++ "\n"
+                ]
+    return $ BLst [
+            codeExpr,
+            codeSet
+        ]
 compileStmt (Incr pos var) = do
     regLoc <- getVarRegLoc var
     case regLoc of
@@ -492,26 +520,29 @@ compileTopDefs code ((ClassDef pos ident elems):lst) = throwError "unimplemented
 compileTopDefs code ((ClassExt pos classIdent parentIdent elems):lst) = throwError "unimplemented"
 compileTopDefs code [] = do return code
 
-compileBuiltInFunctions :: [BuiltInFunction] -> CompilerMonad StringBuilder
-compileBuiltInFunctions [] = return $ BLst []
-compileBuiltInFunctions ((_,_,codeF):tail) = do
-    code <- compileBuiltInFunctions tail
-    return $ BLst [
-            codeF,
-            code
-        ]
+compileBuiltInFunctions :: [BuiltInFunction] -> CompilerMonad (StringBuilder, StringBuilder)
+compileBuiltInFunctions [] = return $ (BLst [], BLst [])
+compileBuiltInFunctions ((_,_,code1,codeData1):tail) = do
+    (code2, codeData2) <- compileBuiltInFunctions tail
+    return (BLst [
+            code1,
+            code2
+        ], BLst [
+            codeData1,
+            codeData2
+        ])
 
 filRetN = 1
 
 compileProgram :: Program -> CompilerMonad String
 compileProgram (Program pos topDefs) = do
-    buildInCode <- compileBuiltInFunctions builtInFunctions
+    (buildInCode, builtInData) <- compileBuiltInFunctions builtInFunctions
     code <- compileTopDefs (BLst []) topDefs
     (vrl, rlu, l, stackDepth, strCodes) <- get
     let (strCode, strNr) = strCodes
     return $ buildString (BLst [
-        BStr $ ".data\n"
-            ++ ".printInt: .ascii \"%d\\n\\0\"\n", -- TODO make it auto for all string 
+        BStr ".data\n",
+        builtInData,
         strCode,
         BStr $ ".text\n"
             ++ ".globl main\n",

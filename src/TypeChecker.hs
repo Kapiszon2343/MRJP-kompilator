@@ -544,7 +544,7 @@ addTopDefs ((ClassExt pos classIdent parentIdent elems):lst) topDefs2 = do
 
 addBuildIntFunctions :: [BuiltInFunction] -> Program -> TypeCheckerMonad (IO ())
 addBuildIntFunctions [] (Program pos topDefs) = addTopDefs topDefs topDefs
-addBuildIntFunctions ((ident, tp, _):functions) program = do
+addBuildIntFunctions ((ident, tp, _, _):functions) program = do
     env <- ask
     loc <- newloc
     modifyMem (Data.Map.insert loc tp)
