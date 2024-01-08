@@ -28,7 +28,8 @@ instance Ord RegLoc where
 type VariableRegisterLoc = Data.Map.Map Ident RegLoc 
 type RegisterLocUse = Data.Map.Map RegLoc [Ident]
 type StringCodes = (StringBuilder, Int)
-type CompilerStore = (VariableRegisterLoc, RegisterLocUse, Int, Int, StringCodes)
+type StackState = (Int, Int)
+type CompilerStore = (VariableRegisterLoc, RegisterLocUse, Int, StackState, StringCodes)
 
 type VarVal = Integer
 
@@ -53,7 +54,7 @@ showReg 7 = "%rcx"
 showReg r = "%r" ++ show r
 
 showRegLoc (Reg r) = showReg r
-showRegLoc (RSP n) = "-" ++ show n ++ "(%rsp)"
+showRegLoc (RSP n) = show n ++ "(%rsp)"
 
 argRegLoc :: Int -> RegLoc
 argRegLoc n = case n of
@@ -81,37 +82,52 @@ lookupArr k mp = fromMaybe [] $ Data.Map.lookup k mp
 
 newLabel :: CompilerMonad String
 newLabel = do
-    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
-    put (vrc, rlu, nextLabel+1, rspSize, strCodes)
+    (vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (vrc, rlu, nextLabel+1, stackState, strCodes)
     return $ "label_" ++ show nextLabel
 
 getNextStack :: CompilerMonad RegLoc
 getNextStack = do
-    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
-    put (vrc, rlu, nextLabel, rspSize+8, strCodes)
-    return $ RSP rspSize
+    (vrc, rlu, nextLabel, (currStackSize, maxStackSize), strCodes) <- get
+    put (vrc, rlu, nextLabel, (currStackSize+8, max maxStackSize $ currStackSize+8), strCodes)
+    return $ RSP currStackSize
 
 getFreeReg' :: Reg -> CompilerMonad Reg
 getFreeReg' r = do
     if r > 9
         then throwError "unimplemented"
         else do
-            (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+            (vrc, rlu, nextLabel, stackState, strCodes) <- get
             case lookupArr (Reg r) rlu of
                 [] -> return r
                 _ -> getFreeReg' (r+1)
 
 getFreeReg :: CompilerMonad Reg
-getFreeReg = getFreeReg' rax
+getFreeReg = getFreeReg' (rax+2)
+
+getFreeRegLoc :: CompilerMonad RegLoc
+getFreeRegLoc = do
+    -- TODO add registers
+    getNextStack
+
+releaseReg :: Reg -> CompilerMonad ()
+releaseReg reg = do
+    (vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (vrc, Data.Map.insert (Reg reg) [] rlu, nextLabel, stackState, strCodes)
 
 freeReg :: Reg -> CompilerMonad StringBuilder
 freeReg r = do
     -- TODO actually free register
     return $ BStr ""
 
+freeRegLoc :: RegLoc -> CompilerMonad StringBuilder
+freeRegLoc r = do
+    -- TODO actually free register
+    return $ BStr ""
+
 getIdentRegLoc :: BNFC'Position -> Ident -> CompilerMonad RegLoc
 getIdentRegLoc pos ident = do
-    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+    (vrc, rlu, nextLabel, stackState, strCodes) <- get
     case Data.Map.lookup ident vrc of
         Nothing -> throwError ("undefined variable " ++ show ident ++ " at " ++ show pos)
         Just regLoc -> return regLoc
@@ -154,6 +170,13 @@ compileIf (EAnd pos expr0 expr1) lt lf = do
 compileIf (ERel pos expr0 op expr1) lt lf = do
     (code1, r1) <- compileExpr expr0
     (code2, r2) <- compileExpr expr1
+    let codeCmp = case (r1, r2) of
+            (Reg _, _) -> BStr $ "\tcmp " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
+            (_, Reg _) -> BStr $ "\tcmp " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
+            _ -> BLst [
+                    BStr $ "\tmov " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n",
+                    BStr $ "\tcmp " ++ showReg rax ++ ", " ++ showRegLoc r1 ++ "\n"
+                ]
     let codeJmpTrue = case op of
             LTH _ -> BStr $ "\tjl " ++ lt ++ "\n"
             LE _ -> BStr $ "\tjle " ++ lt ++ "\n"
@@ -164,40 +187,68 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
     return $ BLst [
             code1,
             code2,
-            BStr $ "\tcmp " ++ showReg r1 ++ ", " ++ showReg r2 ++ "\n",
+            codeCmp,
             codeJmpTrue,
             BStr $ "\tjmp " ++ lf ++ "\n"
         ]
 compileIf _ _ _ = throwError "expected bool"
 
-compileExpr' :: Expr -> Reg -> CompilerMonad StringBuilder
+compileExpr' :: Expr -> RegLoc -> CompilerMonad StringBuilder
 compileExpr' (EVar pos var) r = do
     regLoc <- getVarRegLoc var
-    case regLoc of
-        Reg r -> return $ BLst []
-        _ -> do
-            return $ BStr $ "\tmov " ++ showRegLoc regLoc ++ ", " ++ showReg r ++ "\n"
+    if r == regLoc
+        then return $ BLst []
+        else case (r, regLoc) of
+            (Reg _, _) -> return $ BStr $ "\tmov " ++ showRegLoc regLoc ++ ", " ++ showRegLoc r ++ "\n"
+            (_, Reg _) -> return $ BStr $ "\tmov " ++ showRegLoc regLoc ++ ", " ++ showRegLoc r ++ "\n"
+            _ -> return $ BLst [
+                    BStr $ "\tmov " ++ showRegLoc regLoc ++ ", " ++ showReg rax ++ "\n",
+                    BStr $ "\tmov " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
+                ]
 compileExpr' (ELitInt pos n) r = do
-    return $ BStr $ "\tmov $" ++ show n ++ ", " ++ showReg r ++ "\n"
+    case r of 
+        Reg _ -> return $ BStr $ "\tmov $" ++ show n ++ ", " ++ showRegLoc r ++ "\n"
+        _ -> return $ BLst [
+                BStr $ "\tmov $" ++ show n ++ ", " ++ showReg rax ++ "\n", 
+                BStr $ "\tmov " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
+            ]
 compileExpr' (ELitTrue pos) r = compileExpr' (ELitInt pos 1) r
 compileExpr' (ELitFalse pos) r = compileExpr' (ELitInt pos 0) r
 compileExpr' (ELitNull pos classIdent) r = compileExpr' (ELitInt pos 0) r
 compileExpr' (EString pos str) r = do
-    (vrc, rlu, nextLabel, rspSize, (strCodes, strCodeNr)) <- get
+    (vrc, rlu, nextLabel, stackState, (strCodes, strCodeNr)) <- get
     let strLabel = ".str_" ++ show strCodeNr
     let newStrCodes = BLst [
                 strCodes,
                 BStr $ strLabel ++ ": .ascii \"" ++ str ++ "\\0\"\n"
             ]
-    put (vrc, rlu, nextLabel, rspSize, (newStrCodes, strCodeNr+1))
-    return $ BStr $ "\tleaq " ++ strLabel ++  "(%rip), " ++ showReg r ++ "\n"
+    put (vrc, rlu, nextLabel, stackState, (newStrCodes, strCodeNr+1))
+    case r of
+        Reg _ -> return $ BStr $ "\tlea " ++ strLabel ++  "(%rip), " ++ showRegLoc r ++ "\n"
+        _ -> return $ BLst [
+                BStr $ "\tlea " ++ strLabel ++  "(%rip), " ++ showReg rax ++ "\n",
+                BStr $ "\tmov " ++ showReg rax ++  ", " ++ showRegLoc r ++ "\n"
+            ]
 compileExpr' (EAdd pos expr0 op expr1) r = do
     -- TODO opt
     code1 <- compileExpr' expr0 r
     (code2, r2) <- compileExpr expr1
-    case op of
-        Plus _ -> return $ BStr $ "\tadd " ++ showReg r2 ++ ", " ++ showReg r ++ "\n"
-        Minus _ -> return $ BStr $ "\tsub " ++ showReg r2 ++ ", " ++ showReg r ++ "\n"
+    let isReg = case (r, r2) of
+            (Reg _, _) -> True
+            (_, Reg _) -> True
+            _ -> False
+    let codeAdd = case (isReg, op) of
+            (True, Plus _) -> BStr $ "\tadd " ++ showRegLoc r2 ++ ", " ++ showRegLoc r ++ "\n"
+            (False, Plus _) -> BLst [
+                    BStr $ "\tmov " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n",
+                    BStr $ "\tadd " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
+                ]
+            (True, Minus _) -> BStr $ "\tsub " ++ showRegLoc r2 ++ ", " ++ showRegLoc r ++ "\n"
+    return $ BLst [
+            code2,
+            code1,
+            codeAdd
+        ]
 compileExpr' (ERel pos expr0 op expr1) r = do
     lt <- newLabel
     lf <- newLabel
@@ -206,10 +257,10 @@ compileExpr' (ERel pos expr0 op expr1) r = do
     return $ BLst [
             codeIf,
             BStr $ lt ++ ":\n",
-            BStr $ "\tmov $1, " ++ showReg r ++ "\n",
+            BStr $ "\tmov $1, " ++ showRegLoc r ++ "\n",
             BStr $ "\tjmp " ++ ln ++ "\n",
             BStr $ lf ++ ":\n",
-            BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n",
+            BStr $ "\tmov $0, " ++ showRegLoc r ++ "\n",
             BStr $ ln ++ ":\n"
         ]
 compileExpr' (EAnd pos expr0 expr1) r = do
@@ -220,10 +271,10 @@ compileExpr' (EAnd pos expr0 expr1) r = do
     return $ BLst [
             codeIf,
             BStr $ lt ++ ":\n",
-            BStr $ "\tmov $1, " ++ showReg r ++ "\n",
+            BStr $ "\tmov $1, " ++ showRegLoc r ++ "\n",
             BStr $ "\tjmp " ++ ln ++ "\n",
             BStr $ lf ++ ":\n",
-            BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n",
+            BStr $ "\tmov $0, " ++ showRegLoc r ++ "\n",
             BStr $ ln ++ ":\n"
         ]
 compileExpr' (EOr pos expr0 expr1) r = do
@@ -234,82 +285,87 @@ compileExpr' (EOr pos expr0 expr1) r = do
     return $ BLst [
             codeIf,
             BStr $ lt ++ ":\n",
-            BStr $ "\tmov $1, " ++ showReg r ++ "\n",
+            BStr $ "\tmov $1, " ++ showRegLoc r ++ "\n",
             BStr $ "\tjmp " ++ ln ++ "\n",
             BStr $ lf ++ ":\n",
-            BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n",
+            BStr $ "\tmov $0, " ++ showRegLoc r ++ "\n",
             BStr $ ln ++ ":\n"
         ]
 compileExpr' expr r = do
     (code, rr) <- compileExpr expr
+    let codeMov = case (rr, r) of
+            (Reg _, _) -> BStr $ "\tmov " ++ showRegLoc rr ++ ", " ++ showRegLoc r ++ "\n" 
+            (_, Reg _) -> BStr $ "\tmov " ++ showRegLoc rr ++ ", " ++ showRegLoc r ++ "\n" 
+            _ -> BLst [
+                    BStr $ "\tmov " ++ showRegLoc rr ++ ", " ++ showReg rax ++ "\n" ,
+                    BStr $ "\tmov " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n" 
+                ]
     return $ BLst [
             code,
-            BStr $ "\tmov " ++ showReg rr ++ ", " ++ showReg r ++ "\n"
+            codeMov
         ]
 
 fillArgs :: [RegLoc] -> [Expr] -> CompilerMonad StringBuilder
-fillArgs ((Reg reg):regLocs) (expr:exprs) = do
-    freeReg reg
-    exprCode <- compileExpr' expr reg
+fillArgs (regLoc:regLocs) (expr:exprs) = do
+    freeRegLoc regLoc
+    exprCode <- compileExpr' expr regLoc
     tailCode <- fillArgs regLocs exprs
     return $ BLst [
             exprCode,
-            tailCode
-        ]
-fillArgs ((RSP rsp):regLocs) (expr:exprs) = do
-    freeReg rax
-    exprCode <- compileExpr' expr rax
-    tailCode <- fillArgs regLocs exprs
-    return $ BLst [
-            exprCode,
-            BStr $ "\tmov %rax, " ++ showRegLoc (RSP rsp) ++ "\n",
             tailCode
         ]
 fillArgs regLocs [] = return $ BLst []
 
-compileExpr :: Expr -> CompilerMonad (StringBuilder, Reg)
+compileExpr :: Expr -> CompilerMonad (StringBuilder, RegLoc)
 compileExpr (ENew pos newVar) = throwError "unimplemented"
 compileExpr (EVar pos var) = do
     regLoc <- getVarRegLoc var
-    case regLoc of
-        Reg reg -> return (BLst [], reg)
-        _ -> do
-            reg <- getFreeReg
-            return (BStr $ "\tmov " ++ showRegLoc regLoc ++ ", " ++ showReg reg ++ "\n", reg)
+    return (BLst [], regLoc)
 -- compileExpr (ELitInt pos n) = throwError "unimplemented" -- TODO opt
 compileExpr (ELitTrue pos) = compileExpr (ELitInt pos 1)
 compileExpr (ELitFalse pos) = compileExpr (ELitInt pos 0)
 compileExpr (ELitArr pos elems) = throwError "unimplemented"
 compileExpr (ELitNull pos classIdent) = compileExpr (ELitInt pos 0)
 compileExpr (EApp pos var exprs) = do
-    freeCode <- freeReg rax
     fillCode <- fillArgs argRegLocs exprs
     return (
             BLst [
-                freeCode,
                 fillCode,
                 BStr $ "\tcall " ++ showVar var ++ "\n" -- TODO Maybe check for arrays
             ],
-            rax
+            Reg rax
         )
 -- compileExpr (EString pos str) = 
-compileExpr (ENeg pos expr) = throwError "unimplemented"
-compileExpr (ENot pos expr) = throwError "unimplemented"
+compileExpr (ENeg pos expr) = do
+    (code, r) <- compileExpr expr
+    return (BLst [
+            BStr  "\txor %rax, %rax\n",
+            BStr $ "\tsub " ++ showRegLoc r ++ ", %rax\n",
+            BStr $ "\tmov %rax, " ++ showRegLoc r ++ "\n"
+        ], r)
+compileExpr (ENot pos expr) = do
+    (code, r) <- compileExpr expr
+    return (BStr $ "\txor $1, " ++ showRegLoc r ++ "\n"
+        ,r)
 compileExpr (EMul pos expr0 op expr1) = do
-    freeReg rax
-    freeReg rdx -- freeReg probably does not work in nested expr
-    code1 <- compileExpr' expr0 rax
+    (code1, r1) <- compileExpr expr0
     (code2, r2) <- compileExpr expr1
-    case op of
-        Times _ -> return (BStr $ "\timul " ++ showReg r2++ "\n", rax)
-        Div _ -> return (BStr $ "\tidiv " ++ showReg r2 ++ "\n", rax)
-        Mod _ -> return (BStr $ "\tidiv " ++ showReg r2 ++ "\n", rdx)
+    let (codeMul, outReg) = case op of
+            Times _ -> (BStr $ "\timul " ++ showRegLoc r2 ++ "\n", rax)
+            Div _ -> (BStr $ "\tidiv " ++ showRegLoc r2 ++ "\n", rax)
+            Mod _ -> (BStr $ "\tidiv " ++ showRegLoc r2 ++ "\n", rdx)
+    return (BLst [
+            code1,
+            code2,
+            BStr $ "\tmov " ++ showRegLoc r1 ++ ", %rax\n",
+            codeMul
+        ], Reg outReg)
 -- compileExpr (EAdd pos expr0 op expr1) = throwError "unimplemented"
 -- compileExpr (ERel pos expr0 op expr1) = throwError "unimplemented"
 -- compileExpr (EAnd pos expr0 expr1) = throwError "unimplemented"
 -- compileExpr (EOr pos expr0 expr1) = throwError "unimplemented"
 compileExpr expr = do
-    r <- getFreeReg
+    r <- getFreeRegLoc
     code <- compileExpr' expr r
     return (code, r)
 
@@ -328,28 +384,18 @@ compileStmt (Decl _pos tp (decl:decls)) = do
     case decl of
         NoInit pos ident -> do
             regLoc <- getNextStack -- TODO add using registers
-            (vrc, rlu, nextLabel, rspSize, strCodes) <- get
-            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rspSize, strCodes) -- TODO check if [ident] is correct
+            (vrc, rlu, nextLabel, stackState, strCodes) <- get
+            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, stackState, strCodes) -- TODO check if [ident] is correct
             compileStmt (Empty pos)
         Init pos ident expr -> do
             regLoc <- getNextStack -- TODO add using registers
-            (vrc, rlu, nextLabel, rspSize, strCodes) <- get
-            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rspSize, strCodes) -- TODO check if [ident] is correct
-            (code, reg) <- compileExpr expr
-            return $ BLst [
-                    code,
-                    BStr $ "\tmov " ++ showRegLoc (Reg reg) ++ ", " ++ showRegLoc regLoc ++ "\n"
-                ]
+            (vrc, rlu, nextLabel, stackState, strCodes) <- get
+            put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, stackState, strCodes) -- TODO check if [ident] is correct
+            compileExpr' expr regLoc
+    compileStmt (Decl _pos tp decls)
 compileStmt (Ass pos var expr) = do
     regLoc <- getVarRegLoc var
-    case regLoc of
-        RSP depth -> do
-            (code, reg) <- compileExpr expr
-            return $ BLst [
-                    code,
-                    BStr $ "\tmov " ++ showRegLoc (Reg reg) ++ ", " ++ showRegLoc regLoc ++ "\n"
-                ]
-        Reg reg -> compileExpr' expr reg
+    compileExpr' expr regLoc
 compileStmt (Incr pos var) = do
     regLoc <- getVarRegLoc var
     case regLoc of
@@ -361,7 +407,7 @@ compileStmt (Decr pos var) = do
         Reg reg -> return $ BStr $ "\tsub $1, " ++ showReg reg ++ "\n" 
         _ -> compileStmt (Ass pos var (EAdd pos (EVar pos var) (Minus pos) (ELitInt pos 1)))
 compileStmt (Ret pos expr) = do
-    code <- compileExpr' expr rax
+    code <- compileExpr' expr (Reg rax)
     return $ BLst [
             code,
             BFil filRetN
@@ -414,30 +460,30 @@ compileStmt (SExp pos expr) = do
 addArgs' :: [RegLoc] -> [Arg] -> CompilerMonad ()
 addArgs' _ [] = return ()
 addArgs' (regLoc:regLocs) ((Arg pos tp ident):args) = do
-    (vrc, rlu, nextLabel, rspSize, strCodes) <- get
+    (vrc, rlu, nextLabel, (currStack, maxStack), strCodes) <- get
     case regLoc of
-        Reg _ -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rspSize, strCodes)
-        RSP rsp -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, rsp+8, strCodes)
+        Reg _ -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, (currStack, maxStack), strCodes)
+        RSP rsp -> put (Data.Map.insert ident regLoc vrc, Data.Map.insert regLoc [ident] rlu, nextLabel, (rsp+8, max rsp maxStack), strCodes)
     addArgs' regLocs args
 
 addArgs = addArgs' argRegLocs
 
 compileTopDefs :: StringBuilder -> [TopDef] -> CompilerMonad StringBuilder
 compileTopDefs code ((FnDef pos tp ident args block):lst) = do
-    (vrc0, rlu0, nextLabel0, rspSizeOld0, strCodes0) <- get
-    put (Data.Map.empty, Data.Map.empty, nextLabel0, 0, strCodes0)
+    (vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
+    put (Data.Map.empty, Data.Map.empty, nextLabel0, (0, 0), strCodes0)
     addArgs args
     currCode <- compileStmt (BStmt pos block)
-    (vrc, rlu, nextLabel, rspSizeOld, strCodes) <- get
-    let rspSize = 32 * div (rspSizeOld + 31) 32
+    (vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
+    let stackMax = 32 * div (oldStackMax + 31) 32
     compileTopDefs (BLst [
             code,
             BStr $ showIdent ident ++ ":\n"
                 ++ "\tpush %rbp\n"
                 ++ "\tmov %rsp, %rbp\n"
-                ++ "\tsub $" ++ show rspSize ++ ", %rsp\n",
+                ++ "\tsub $" ++ show stackMax ++ ", %rsp\n",
             fillStringBuilder (Data.Map.singleton filRetN (
-                   "\tadd $" ++ show rspSize ++ ", %rsp\n"
+                   "\tadd $" ++ show stackMax ++ ", %rsp\n"
                 ++ "\tmov %rbp, %rsp\n"
                 ++ "\tpop %rbp\n"
                 ++ "\tret\n")) currCode
