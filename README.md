@@ -6,3 +6,5 @@ uruchomienie: jak w treści, dla dołączonego test np: ./latc_x86_64 lattests/g
 program wypisze wtedy ERROR\n z powodem błędu lub OK\n jeśli kod został zaakceptowany. Kompilacja nie została jeszcze zaimplementowana
 
 Sprawdzane są wszystkie podane rozszerzenia poza metodami wirtualnymi tzn tablice, klasy z dziedziczeniem
+
+Kompilacja działa na maszynie stosowej bez rozszerzeń

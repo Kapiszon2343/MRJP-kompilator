@@ -85,12 +85,14 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
+        ++ "\tmov %rcx, %rdx\n"
+        ++ "\tleaq .printString(%rip), %rcx\n"
         ++ "\tcall printf\n"
         ++ "\tadd $32, %rsp\n"
         ++ "\tmov %rbp, %rsp\n"
         ++ "\tpop %rbp\n"
         ++ "\tret\n",
-        BStr ""),
+        BStr ".printString: .ascii \"%s\\n\\0\"\n"),
     (Ident "error", Fun Nothing (Void Nothing) [], BStr
         $ "error:\n"
         ++ "\tpush %rbp\n"
@@ -121,12 +123,13 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
-        ++ "\tmov $128, %rcx\n"
+        ++ "\tmov $64, %rcx\n"
         ++ "\tcall malloc\n"
-        ++ "\tleaq .readString(%rip), %rcx\n"
+        ++ "\tmov %rax, 8(%rsp)\n"
         ++ "\tmov %rax, %rdx\n"
+        ++ "\tleaq .readString(%rip), %rcx\n"
         ++ "\tcall scanf\n"
-        ++ "\tmov %rdx, %rax\n"
+        ++ "\tmov 8(%rsp), %rax\n"
         ++ "\tadd $32, %rsp\n"
         ++ "\tmov %rbp, %rsp\n"
         ++ "\tpop %rbp\n"
