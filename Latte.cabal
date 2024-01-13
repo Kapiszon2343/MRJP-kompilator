@@ -23,7 +23,7 @@ executable latc_x86_64
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules: Latte.Abs, Latte.Lex, Latte.Par, Latte.Print, Latte.Skel, Compiler, Run, Common, TypeChecker
+    other-modules: Latte.Abs, Latte.Lex, Latte.Par, Latte.Print, Latte.Skel, Compiler, Run, Common, TypeChecker, InfoDigger
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
