@@ -21,7 +21,7 @@ runCompiler program filePath fileName = do
             hPutStrLn stderr $ "ERROR\n" ++ mess
             exitFailure
         Right _ -> do
-            hPutStrLn stderr "OK\n"
+            hPutStrLn stderr "OK"
             res <- evalStateT (runReaderT (runExceptT $ compileProgram program) (Data.Map.empty, Data.Map.empty)) ((Data.Map.empty, 1), Data.Map.empty, Data.Map.empty, 0, (0,0), (BLst [], 0))
             case res of
                 Left mess -> do 

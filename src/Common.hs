@@ -10,6 +10,7 @@ import qualified Data.Bifunctor
 import Text.Read (readMaybe)
 import Data.Array (Array)
 import Data.Maybe
+import Distribution.System (OS(Windows, Linux), buildOS)
 
 type ClassForm = (Data.Map.Map Ident (Type, Int), Int)
 type EnvLoc = Data.Map.Map Ident Loc
@@ -20,6 +21,45 @@ type Loc = Int
 type Env = (EnvLoc, EnvClass)
 
 type BuiltInFunction = (Ident, Type, StringBuilder, StringBuilder)
+
+type Reg = Int
+data RegLoc = Reg Reg
+    | RBP Int
+    deriving Show
+
+showRegLoc (Reg r) = showReg r
+showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
+
+rax :: Reg
+rsp = 0
+rbp = 1
+rbx = 2
+rax = 3
+rdx = 4
+rsi = 5
+rdi = 6
+rcx = 7
+r8 = 8
+r9 = 9
+
+showReg :: Reg -> String
+showReg 0 = "%rsp"
+showReg 1 = "%rbp"
+showReg 2 = "%rbx"
+showReg 3 = "%rax"
+showReg 4 = "%rdx"
+showReg 5 = "%rsi"
+showReg 6 = "%rdi"
+showReg 7 = "%rcx"
+showReg r = "%r" ++ show r
+
+argReg :: [Reg]
+argReg = case buildOS of
+    Windows -> [rcx, rdx, r8, r9]
+    Linux -> [rdi, rsi, rdx, rcx, r8, r9]
+argRegCount = length argReg
+argRegLoc0 = Reg $ head argReg
+argRegLoc1 = Reg $ argReg!!1
 
 argToType :: Arg -> Type
 argToType (Arg _pos tp _ident) = tp
@@ -72,8 +112,8 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
-        ++ "\tmov %rcx, %rdx\n"
-        ++ "\tleaq .printInt(%rip), %rcx\n"
+        ++ "\tmov " ++ showRegLoc argRegLoc0 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n"
+        ++ "\tleaq .printInt(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall printf\n"
         ++ "\tadd $32, %rsp\n"
         ++ "\tmov %rbp, %rsp\n"
@@ -85,8 +125,8 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
-        ++ "\tmov %rcx, %rdx\n"
-        ++ "\tleaq .printString(%rip), %rcx\n"
+        ++ "\tmov " ++ showRegLoc argRegLoc0 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n"
+        ++ "\tleaq .printString(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall printf\n"
         ++ "\tadd $32, %rsp\n"
         ++ "\tmov %rbp, %rsp\n"
@@ -98,7 +138,7 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
-        ++ "\tleaq .error(%rip), %rcx\n"
+        ++ "\tleaq .error(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall printf\n"
         ++ "\tmov $60, %eax\n"
         ++ "\tmov $0, %ebx\n"
@@ -109,8 +149,8 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
-        ++ "\tleaq .readInt(%rip), %rcx\n"
-        ++ "\tmov %rsp, %rdx\n"
+        ++ "\tleaq .readInt(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
+        ++ "\tmov %rsp, " ++ showRegLoc argRegLoc1 ++ "\n"
         ++ "\tcall scanf\n"
         ++ "\tmov 0(%rsp), %rax\n"
         ++ "\tadd $32, %rsp\n"
@@ -123,11 +163,11 @@ builtInFunctions = [
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
-        ++ "\tmov $64, %rcx\n"
+        ++ "\tmov $64, " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall malloc\n"
         ++ "\tmov %rax, 8(%rsp)\n"
-        ++ "\tmov %rax, %rdx\n"
-        ++ "\tleaq .readString(%rip), %rcx\n"
+        ++ "\tmov %rax, " ++ showRegLoc argRegLoc1 ++ "\n"
+        ++ "\tleaq .readString(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall scanf\n"
         ++ "\tmov 8(%rsp), %rax\n"
         ++ "\tadd $32, %rsp\n"

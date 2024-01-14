@@ -13,15 +13,9 @@ import Latte.Abs
 import Common
 import qualified Text.ParserCombinators.ReadP as Data.Map
 import GHC.IO.Handle.Internals (readTextDevice)
-import Distribution.System
 import InfoDigger (digStmtInfoPub)
 import Control.Exception.Base (throw)
 
-type Reg = Int
-
-data RegLoc = Reg Reg
-    | RBP Int
-    deriving Show
 instance Eq RegLoc where
     Reg regNr0 == Reg regNr1 = regNr0 == regNr1
     RBP offset0 == RBP offset1 = offset0 == offset1
@@ -44,39 +38,9 @@ type CompilerMonad = ExceptT String (ReaderT Env (StateT CompilerStore IO))
 
 type Ret = (Env -> Env, VarVal)
 
-rax :: Reg
-rsp = 0
-rbp = 1
-rbx = 2
-rax = 3
-rdx = 4
-rsi = 5
-rdi = 6
-rcx = 7
-r8 = 8
-r9 = 9
-
-showReg :: Reg -> String
-showReg 0 = "%rsp"
-showReg 1 = "%rbp"
-showReg 2 = "%rbx"
-showReg 3 = "%rax"
-showReg 4 = "%rdx"
-showReg 5 = "%rsi"
-showReg 6 = "%rdi"
-showReg 7 = "%rcx"
-showReg r = "%r" ++ show r
-
-showRegLoc (Reg r) = showReg r
-showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
-
-argReg = case buildOS of
-    Windows -> [rcx, rdx, r8, r9]
-    Linux -> [rdi, rsi, rdx, rcx, r8, r9]
-argRegCount = length argReg
-
 stableReg = [10..15]
 allUsableRegLocs = [rax..15] -- TODO all registers
+argRegLocs :: Int -> [RegLoc]
 argRegLocs = argRegLocs' argReg
 
 argRegLocs' :: [Reg] -> Int -> [RegLoc]
@@ -356,60 +320,60 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         code2,
                         BStr $ "\tmovq " ++ showRegLoc r ++ ", %rax\n",
                         BStr $ "\tmovq " ++ showRegLoc r2 ++ ", %rdx\n",
-                        BStr   "\tpush %rcx\n",
+                        BStr $ "\tpush " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tpush %r12\n",
                         BStr   "\tpush %r13\n",
 
                         BStr   "\tmovq %rax, %r12\n",
                         BStr   "\tmovq %rdx, %r13\n",
-                        BStr   "\tmovq $1, %rcx\n",
+                        BStr $ "\tmovq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
 
                         BStr $ "\tjmp " ++ loopCond1 ++ "\n",
-                        BStr $ "\t" ++ loopStart1 ++ ":\n",
-                        BStr   "\tadd $1, %rcx\n",
+                        BStr $ loopStart1 ++ ":\n",
+                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tadd $1, %rax\n",
-                        BStr $ "\t" ++ loopCond1 ++ ":\n",
+                        BStr $ loopCond1 ++ ":\n",
                         BStr   "\tmovb 0(%rax), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart1 ++ "\n",
                         
                         BStr   "\tmovq %r13, %rax\n",
                         BStr $ "\tjmp " ++ loopCond2 ++ "\n",
-                        BStr $ "\t" ++ loopStart2 ++ ":\n",
-                        BStr   "\tadd $1, %rcx\n",
+                        BStr $ loopStart2 ++ ":\n",
+                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tadd $1, %rax\n",
-                        BStr $ "\t" ++ loopCond2 ++ ":\n",
+                        BStr $ loopCond2 ++ ":\n",
                         BStr   "\tmovb 0(%rax), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart2 ++ "\n",
                         
                         BStr   "\tcall malloc\n",
-                        BStr   "\tmovq %rax, %rcx\n",
+                        BStr $ "\tmovq %rax, " ++ showRegLoc argRegLoc0 ++ "\n",
                            
                         BStr $ "\tjmp " ++ loopCond3 ++ "\n",
-                        BStr $ "\t" ++ loopStart3 ++ ":\n",
-                        BStr   "\tmovb %dl, 0(%rcx)\n",
-                        BStr   "\tadd $1, %rcx\n",
+                        BStr $ loopStart3 ++ ":\n",
+                        BStr $ "\tmovb %dl, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
+                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tadd $1, %r12\n",
-                        BStr $ "\t" ++ loopCond3 ++ ":\n",
+                        BStr $ loopCond3 ++ ":\n",
                         BStr   "\tmovb 0(%r12), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart3 ++ "\n",
                         
                         BStr $ "\tjmp " ++ loopCond4 ++ "\n",
-                        BStr $ "\t" ++ loopStart4 ++ ":\n",
-                        BStr   "\tmovb %dl, 0(%rcx)\n",
-                        BStr   "\tadd $1, %rcx\n",
+                        BStr $ loopStart4 ++ ":\n",
+                        BStr $ "\tmovb %dl, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
+                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tadd $1, %r13\n",
-                        BStr $ "\t" ++ loopCond4 ++ ":\n",
+                        BStr $ loopCond4 ++ ":\n",
                         BStr   "\tmovb 0(%r13), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart4 ++ "\n",
                         
-                        BStr   "\tmovb $0, 0(%rcx)\n",
+                        BStr $ "\tmovb $0, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
                         BStr   "\tpop %r13\n",
                         BStr   "\tpop %r12\n",
-                        BStr   "\tpop %rcx\n",
+                        BStr $ "\tpop " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr $ "\tmovq %rax, " ++ showRegLoc r ++ "\n"
                     ]
         _ -> do
@@ -741,41 +705,25 @@ addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
                         BStr $ "\tmovq " ++ showRegLoc regLocIn ++ ", %rax\n",
                         BStr $ "\tmovq %rax, " ++ showRegLoc regLocOut ++ "\n"
                     ])
-    case regLocOut of
-        Reg _ -> put (
-            (Data.Map.insert loc tp lt, l), 
-            Data.Map.insert loc regLocOut vrc, 
-            Data.Map.insert regLocOut [ident] rlu, 
-            nextLabel, 
-            (currStack, maxStack), 
-            strCodes)
-        RBP rsp -> put (
-            (Data.Map.insert loc tp lt, l), 
-            Data.Map.insert loc regLocOut vrc, 
-            Data.Map.insert regLocOut [ident] rlu, 
-            nextLabel, 
-            (rsp+8, max rsp maxStack), 
-            strCodes)
+    put (
+        (Data.Map.insert loc tp lt, l), 
+        Data.Map.insert loc regLocOut vrc, 
+        Data.Map.insert regLocOut [ident] rlu, 
+        nextLabel, 
+        (currStack, maxStack), 
+        strCodes)
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs [] moveArgs)
     return (BLst [codeMoves, codeMov], codeStmt, envModRet)
 addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
     loc <- newLoc
     ((lt,l), vrc, rlu, nextLabel, (currStack, maxStack), strCodes) <- get
     (envVar, envClass) <- ask
-    case regLoc of
-        Reg _ -> put (
+    put (
             (Data.Map.insert loc tp lt, l), 
             Data.Map.insert loc regLoc vrc, 
             Data.Map.insert regLoc [ident] rlu, 
             nextLabel, 
             (currStack, maxStack), 
-            strCodes)
-        RBP rsp -> put (
-            (Data.Map.insert loc tp lt, l), 
-            Data.Map.insert loc regLoc vrc, 
-            Data.Map.insert regLoc [ident] rlu, 
-            nextLabel, 
-            (rsp+8, max rsp maxStack), 
             strCodes)
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs args moveArgs)
     return (codeMoves, codeStmt, envModRet)
