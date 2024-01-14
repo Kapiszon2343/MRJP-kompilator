@@ -26,6 +26,7 @@ import Common
       EnvLoc )
 import qualified Latte.Abs as Data.Map
 import Data.Bool (bool)
+import Data.Array (Array)
 
 matchTypesExprs :: BNFC'Position -> [Type] -> [Expr] -> TypeCheckerMonad ()
 matchTypesExprs _pos [] [] = return ()
@@ -144,6 +145,11 @@ getVarType (AttrVar pos var ident) = do
                 Nothing -> throwError $ "Something went horribly wrong!!\n Could not find class " ++ showIdent classIdent ++ "of variable " ++ showVar var ++ " at: " ++ showPos pos
         _ -> throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ "does not have attributes"
 
+failOnVoid :: Type -> TypeCheckerMonad ()
+failOnVoid (Void pos) = throwError $ "Type 'void' is not allowed at: " ++ showPos pos
+failOnVoid (Array pos baseTp) = failOnVoid baseTp
+failOnVoid _ = return ()
+
 checkFunc' ::  BNFC'Position -> EnvLoc -> Type -> [Arg] -> Block -> TypeCheckerMonad Type
 checkFunc' pos blockIdent ret [] block = do
     (_, actualRet) <- typeCheckBlock ret blockIdent block
@@ -154,6 +160,7 @@ checkFunc' pos blockIdent ret [] block = do
             _ -> throwError $ "Return value expected in function at: " ++ showPos pos
 checkFunc' pos blockIdent ret (arg:args) block = do
     let tp = argToType arg
+    failOnVoid tp
     let ident = argToIdent arg
     case Data.Map.lookup ident blockIdent of
         Just _ -> throwError $ "arguments cannot have repeated names at: " ++ showPos pos
@@ -376,6 +383,7 @@ typeCheck expectedType _ (Empty pos) = do return (id, NoRet)
 typeCheck expectedType _ (BStmt bStmtPos block) = 
     typeCheckBlock expectedType Data.Map.empty block
 typeCheck expectedType blockIdent (Decl pos valType items) = do
+    failOnVoid valType
     vals <- evalItems blockIdent valType items
     return (\env -> Prelude.foldl (\ mp (ident, loc) -> Data.Map.insert ident loc mp) env vals, NoRet)
 typeCheck expectedType _ (Ass pos var expr) = do 
