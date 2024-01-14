@@ -518,7 +518,20 @@ extendClass pos parentIdent elems = do
         Nothing -> throwError $ "Parent class " ++ showIdent parentIdent ++ " not found at: " ++ showPos pos
 
 addTopDefs :: [TopDef] -> [TopDef] -> TypeCheckerMonad (IO ())
-addTopDefs [] topDefs2 = runTopDefs topDefs2
+addTopDefs [] topDefs2 = do
+    (envLoc, envClass) <- ask
+    case Data.Map.lookup (Ident "main") envLoc of
+        Just loc -> do
+            (mem, _) <- get
+            case Data.Map.lookup loc mem of
+                Just (Fun pos retTp []) -> do
+                    isTypeSame <- matchType retTp (Int pos)
+                    if isTypeSame
+                        then runTopDefs topDefs2
+                        else throwError "function \"main\" should return int"
+                Just (Fun _ retTp _) -> throwError "function \"main\" should not have arguments"
+                _ -> throwError "function \"main\" has wrong type"
+        Nothing -> throwError "function \"main\" has not been implemented"
 addTopDefs ((FnDef pos ret ident args _block):lst) topDefs2 = do
     (envLoc, envClass) <- ask
     case Data.Map.lookup ident envLoc of
