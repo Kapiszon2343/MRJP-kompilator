@@ -1,5 +1,6 @@
 dist-newstyle
 latc_ARCH
+.vscode
 latc_x86_64
 latc_x86_64.exe
 lattests/*/*.s
