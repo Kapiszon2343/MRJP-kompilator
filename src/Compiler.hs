@@ -45,9 +45,16 @@ type CompilerMonad = ExceptT String (ReaderT Env (StateT CompilerStore IO))
 type Ret = (Env -> Env, VarVal)
 
 rax :: Reg
+rsp = 0
+rbp = 1
+rbx = 2
 rax = 3
-rcx = 7
 rdx = 4
+rsi = 5
+rdi = 6
+rcx = 7
+r8 = 8
+r9 = 9
 
 showReg :: Reg -> String
 showReg 0 = "%rsp"
@@ -64,8 +71,8 @@ showRegLoc (Reg r) = showReg r
 showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
 
 argReg = case buildOS of
-    Windows -> [rcx, rdx, 8, 9]
-    Linux -> error "unimplemented"
+    Windows -> [rcx, rdx, r8, r9]
+    Linux -> [rdi, rsi, rdx, rcx, r8, r9]
 argRegCount = length argReg
 
 stableReg = [10..15]
