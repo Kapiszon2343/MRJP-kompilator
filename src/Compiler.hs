@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use foldr" #-}
 module Compiler where
 
 import Data.Map
@@ -13,20 +15,22 @@ import qualified Text.ParserCombinators.ReadP as Data.Map
 import GHC.IO.Handle.Internals (readTextDevice)
 import Distribution.System
 import InfoDigger (digStmtInfoPub)
+import Control.Exception.Base (throw)
 
 type Reg = Int
 
 data RegLoc = Reg Reg
-    | RSP Int
+    | RBP Int
+    deriving Show
 instance Eq RegLoc where
     Reg regNr0 == Reg regNr1 = regNr0 == regNr1
-    RSP offset0 == RSP offset1 = offset0 == offset1
+    RBP offset0 == RBP offset1 = offset0 == offset1
     _ == _ = False
 instance Ord RegLoc where
     compare (Reg r0) (Reg r1) = compare r0 r1
-    compare (RSP r0) (RSP r1) = compare r1 r0
-    compare (Reg _) (RSP _) = LT
-    compare (RSP _) (Reg _) = GT
+    compare (RBP r0) (RBP r1) = compare r1 r0
+    compare (Reg _) (RBP _) = LT
+    compare (RBP _) (Reg _) = GT
 type VariableRegisterLoc = Data.Map.Map Loc RegLoc 
 type RegisterLocUse = Data.Map.Map RegLoc [Ident]
 type StringCodes = (StringBuilder, Int)
@@ -57,29 +61,25 @@ showReg 7 = "%rcx"
 showReg r = "%r" ++ show r
 
 showRegLoc (Reg r) = showReg r
-showRegLoc (RSP n) = show n ++ "(%rsp)"
-
-argRegLoc :: Int -> RegLoc
-argRegLoc n = case n of
-    0 -> Reg rax
-    1 -> Reg rcx
-    2 -> Reg rdx
-    3 -> Reg 8
-    4 -> Reg 9
-    _ -> RSP ((n - 5) * 8)
+showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
 
 argReg = case buildOS of
     Windows -> [rcx, rdx, 8, 9]
     Linux -> error "unimplemented"
+argRegCount = length argReg
 
 stableReg = [10..15]
 allUsableRegLocs = [rax..15] -- TODO all registers
 argRegLocs = argRegLocs' argReg
 
-argRegLocs' = Prelude.foldr ((:) . Reg) (argRegLocs'' 0)
+argRegLocs' :: [Reg] -> Int -> [RegLoc]
+argRegLocs' _ 0 = []
+argRegLocs' [] remainingArgs = argRegLocs'' ((-8) * remainingArgs - 8)
+argRegLocs' (reg:regs) remainingArgs = Reg reg:argRegLocs' regs (remainingArgs-1)
 
 argRegLocs'' :: Int -> [RegLoc]
-argRegLocs'' n = RSP n:argRegLocs'' (n+8)
+argRegLocs'' 0 = []
+argRegLocs'' stackDist = RBP stackDist:argRegLocs'' (stackDist+8)
 
 lookupInt :: Ord k => k -> Data.Map.Map k Int -> Int
 lookupInt k mp = fromMaybe 0 $ Data.Map.lookup k mp
@@ -139,7 +139,7 @@ getNextStack :: CompilerMonad RegLoc
 getNextStack = do
     (lt, vrc, rlu, nextLabel, (currStackSize, maxStackSize), strCodes) <- get
     put (lt, vrc, rlu, nextLabel, (currStackSize+8, max maxStackSize $ currStackSize+8), strCodes)
-    return $ RSP currStackSize
+    return $ RBP currStackSize
 
 getFreeReg' :: Reg -> CompilerMonad Reg
 getFreeReg' r = do
@@ -493,17 +493,29 @@ compileExpr' expr r = do
                 codeMov
             ]
 
-fillArgs :: [RegLoc] -> [Expr] -> CompilerMonad StringBuilder
-fillArgs (regLoc:regLocs) (expr:exprs) = do
+fillArgs :: [RegLoc] -> [Expr] -> CompilerMonad (StringBuilder, StringBuilder)
+fillArgs ((Reg reg):regLocs) (expr:exprs) = do
+    let regLoc = (Reg reg)
     freeCode <- freeRegLoc regLoc
     exprCode <- compileExpr' expr regLoc
-    tailCode <- fillArgs regLocs exprs
-    return $ BLst [
+    (tailCode, popCode) <- fillArgs regLocs exprs
+    return (BLst [
             freeCode,
             exprCode,
             tailCode
-        ]
-fillArgs _ [] = return $ BLst []
+        ],
+        popCode)
+fillArgs regLocs (expr:exprs) = do
+    (exprCode, reg) <- compileExpr expr
+    (tailCode, popCode) <- fillArgs regLocs exprs
+    return (BLst [
+            exprCode,
+            BStr $ "\tmov " ++ showRegLoc reg ++ ", %rax\n",
+            BStr   "\tpush %rax\n",
+            tailCode
+        ],
+        BLst[BStr "\tpop %rax\n", popCode])
+fillArgs _ [] = return (BLst [], BLst [])
 
 compileExpr :: Expr -> CompilerMonad (StringBuilder, RegLoc)
 compileExpr (ENew pos newVar) = throwError "unimplemented"
@@ -516,11 +528,12 @@ compileExpr (ELitFalse pos) = compileExpr (ELitInt pos 0)
 compileExpr (ELitArr pos elems) = throwError "unimplemented"
 compileExpr (ELitNull pos classIdent) = compileExpr (ELitInt pos 0)
 compileExpr (EApp pos var exprs) = do
-    fillCode <- fillArgs argRegLocs exprs
+    (fillCode, popCode) <- fillArgs (argRegLocs argRegCount) exprs
     return (
             BLst [
                 fillCode,
-                BStr $ "\tcall " ++ showVar var ++ "\n" -- TODO Maybe check for arrays
+                BStr $ "\tcall " ++ showVar var ++ "\n", -- TODO Maybe check for arrays
+                popCode
             ],
             Reg rax
         )
@@ -708,8 +721,9 @@ addArgs' :: Stmt -> [RegLoc] -> [Arg] -> [(RegLoc, Arg)] -> CompilerMonad (Strin
 addArgs' stmt _ [] [] = do
     (codeStmt, envMod) <- compileStmt stmt
     return (BStr "", codeStmt, envMod)
-addArgs' stmt (regLocOut:regLocsOut) [] ((regLocIn, Arg pos tp ident):moveArgs) = do
+addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
     loc <- newLoc
+    regLocOut <- getFreeRegLoc
     ((lt,l), vrc, rlu, nextLabel, (currStack, maxStack), strCodes) <- get
     (envVar, envClass) <- ask
     codeMov <- case regLocIn of
@@ -728,14 +742,14 @@ addArgs' stmt (regLocOut:regLocsOut) [] ((regLocIn, Arg pos tp ident):moveArgs) 
             nextLabel, 
             (currStack, maxStack), 
             strCodes)
-        RSP rsp -> put (
+        RBP rsp -> put (
             (Data.Map.insert loc tp lt, l), 
             Data.Map.insert loc regLocOut vrc, 
             Data.Map.insert regLocOut [ident] rlu, 
             nextLabel, 
             (rsp+8, max rsp maxStack), 
             strCodes)
-    (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocsOut [] moveArgs)
+    (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs [] moveArgs)
     return (BLst [codeMoves, codeMov], codeStmt, envModRet)
 addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
     loc <- newLoc
@@ -749,7 +763,7 @@ addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
             nextLabel, 
             (currStack, maxStack), 
             strCodes)
-        RSP rsp -> put (
+        RBP rsp -> put (
             (Data.Map.insert loc tp lt, l), 
             Data.Map.insert loc regLoc vrc, 
             Data.Map.insert regLoc [ident] rlu, 
@@ -758,6 +772,7 @@ addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
             strCodes)
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs args moveArgs)
     return (codeMoves, codeStmt, envModRet)
+addArgs' stmt regLocs args moveArgs = throwError $ "addArgs' stmt regLocs:" ++ show regLocs ++ "args: " ++ show args ++ "moveArgs" ++ show moveArgs
 
 moveRegArgs :: Int -> [RegLoc] -> [Arg] -> CompilerMonad ([RegLoc], [Arg], [(RegLoc, Arg)])
 moveRegArgs 0 ((Reg r):regLocs) (arg:args) = do
@@ -772,9 +787,10 @@ moveRegArgs n regLocs [] = return (regLocs, [], [])
 addArgs :: Int -> Stmt -> [Arg] -> CompilerMonad (StringBuilder, StringBuilder, Env -> Env)
 addArgs maxAppArgs stmt args =
     if maxAppArgs == 0
-        then addArgs' stmt argRegLocs args []
+        then addArgs' stmt (argRegLocs (length args)) args []
         else do 
-            (shortenedArgRegLocs, shortenedArgs, moveArgs) <- moveRegArgs maxAppArgs argRegLocs args
+            let regLocs = argRegLocs (length args)
+            (shortenedArgRegLocs, shortenedArgs, moveArgs) <- moveRegArgs maxAppArgs regLocs args
             addArgs' stmt shortenedArgRegLocs shortenedArgs moveArgs
 
 compileTopDefs :: StringBuilder -> [TopDef] -> CompilerMonad StringBuilder
