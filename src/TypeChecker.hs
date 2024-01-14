@@ -470,7 +470,11 @@ typeCheck expectedType _ (ForEach pos valType ident expr loopStmt) = do
         _ -> throwError $ "Foreach requires array to iterate through at: " ++ showPos pos
 typeCheck expectedType _ (SExp pos expr) = do
     eval expr
-    return (id, NoRet)
+    case expr of
+        (EApp posApp (IdentVar posVar ident) args) -> if ident == Ident "error"
+            then return (id, DoRet expectedType)
+            else return (id, NoRet)
+        _ -> return (id, NoRet)
 
 runTopDefs :: [TopDef] -> TypeCheckerMonad (IO ())
 runTopDefs [] = do 
