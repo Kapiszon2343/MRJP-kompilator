@@ -5,3 +5,5 @@ latc_x86_64
 latc_x86_64.exe
 lattests/*/*.s
 lattests/*/*.exe
+lattests/*/*/*.s
+lattests/*/*/*.exe
