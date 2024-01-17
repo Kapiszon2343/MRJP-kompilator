@@ -342,16 +342,17 @@ eval (EOr pos expr1 expr2) = do
                 else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp2
         else throwError $ "Wrong parameter type at: " ++ showPos pos ++ "\nExpected: bool\nActual: " ++ showType tp1
 
-evalItems :: EnvLoc -> Type -> [Item] -> TypeCheckerMonad [(Ident, Loc)]
-evalItems _blockIdent _def [] = return []
+evalItems :: EnvLoc -> Type -> [Item] -> TypeCheckerMonad (EnvLoc -> EnvLoc)
+evalItems _blockIdent _def [] = return id
 evalItems blockIdent tp ((NoInit pos ident):items) = do
     case Data.Map.lookup ident blockIdent of
         Just _ -> throwError $ "Multiple definitions of same name at: " ++ showPos pos
         Nothing -> do
             loc <- newloc
-            rets <- evalItems (Data.Map.insert ident loc blockIdent) tp items
             modifyMem (Data.Map.insert loc tp)
-            return $ (ident, loc):rets
+            let envLocMod1 = Data.Map.insert ident loc
+            envLocMod2 <- local (first envLocMod1) (evalItems (Data.Map.insert ident loc blockIdent) tp items)
+            return $ envLocMod1 . envLocMod2
 evalItems blockIdent tp ((Init pos ident expr):items) = do
     case Data.Map.lookup ident blockIdent of
         Just _ -> throwError $ "Multiple definitions of same name at: " ++ showPos pos
@@ -361,9 +362,10 @@ evalItems blockIdent tp ((Init pos ident expr):items) = do
             if bol
                 then do
                     loc <- newloc
-                    rets <- evalItems (Data.Map.insert ident loc blockIdent) tp items
                     modifyMem (Data.Map.insert loc tp)
-                    return $ (ident, loc):rets
+                    let envLocMod1 = Data.Map.insert ident loc
+                    envLocMod2 <- local (first envLocMod1) (evalItems (Data.Map.insert ident loc blockIdent) tp items)
+                    return $ envLocMod1 . envLocMod2
                 else throwError $ "Wrong assign type at: " ++ showPos pos ++ "\nExpected: " ++ showType evalTp ++ "\nActual: " ++ showType tp
 
 typeCheckBlock' :: RetType -> Type -> EnvLoc -> Block -> TypeCheckerMonad Ret 
@@ -384,8 +386,8 @@ typeCheck expectedType _ (BStmt bStmtPos block) =
     typeCheckBlock expectedType Data.Map.empty block
 typeCheck expectedType blockIdent (Decl pos valType items) = do
     failOnVoid valType
-    vals <- evalItems blockIdent valType items
-    return (\env -> Prelude.foldl (\ mp (ident, loc) -> Data.Map.insert ident loc mp) env vals, NoRet)
+    envMod <- evalItems blockIdent valType items
+    return (envMod, NoRet)
 typeCheck expectedType _ (Ass pos var expr) = do 
     exprTp <- eval expr
     tp <- getVarType var
