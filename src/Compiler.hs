@@ -40,8 +40,8 @@ type CompilerMonad = ExceptT String (ReaderT Env (StateT CompilerStore IO))
 
 type Ret = (Env -> Env, VarVal)
 
-stableReg = [10..15]
-allUsableRegLocs = [rax..15] -- TODO all registers
+stableRegs = [10..15]
+allRegs = [rax..15] -- TODO all registers
 argRegLocs :: Int -> [RegLoc]
 argRegLocs = argRegLocs' argReg
 
@@ -121,7 +121,7 @@ getNextStack = do
 
 getFreeReg' :: Reg -> CompilerMonad Reg
 getFreeReg' r = do
-    if r > 9
+    if r > 15
         then throwError "unimplemented"
         else do
             (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
@@ -130,7 +130,7 @@ getFreeReg' r = do
                 _ -> getFreeReg' (r+1)
 
 getFreeReg :: CompilerMonad Reg
-getFreeReg = getFreeReg' (rax+2)
+getFreeReg = getFreeReg' (rax+1)
 
 getFreeRegLoc :: CompilerMonad RegLoc
 getFreeRegLoc = do
@@ -146,17 +146,15 @@ freeReg :: Reg -> CompilerMonad StringBuilder
 freeReg r = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
     case Data.Map.lookup (Reg r) rlu of
-        Nothing -> return $ BStr ""
-        Just [] -> return $ BStr ""
+        Nothing -> return $ BLst []
+        Just [] -> return $ BLst []
         Just ref -> do
             newRegLoc <- getFreeRegLoc
             (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
             let rlu1 = Data.Map.insert (Reg r) [] rlu
             let rlu2 = Data.Map.insert newRegLoc ref rlu1
             put (lt, vrc, rlu2, nextLabel, stackState, strCodes)
-            return $ BLst [
-                    BStr $ "\tmovq " ++ showReg r ++ ", " ++ showRegLoc newRegLoc ++ "\n"
-                ]
+            return $ moveRegsLocs (Reg r) newRegLoc
 
 freeRegLoc :: RegLoc -> CompilerMonad StringBuilder
 freeRegLoc r = do
@@ -165,18 +163,15 @@ freeRegLoc r = do
         _ -> do
             (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
             case Data.Map.lookup r rlu of
-                Nothing -> return $ BStr ""
-                Just [] -> return $ BStr ""
+                Nothing -> return $ BLst []
+                Just [] -> return $ BLst []
                 Just ref -> do
                     newRegLoc <- getFreeRegLoc
                     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
                     let rlu1 = Data.Map.insert r [] rlu
                     let rlu2 = Data.Map.insert newRegLoc ref rlu1
                     put (lt, vrc, rlu2, nextLabel, stackState, strCodes)
-                    return $ BLst [
-                            BStr $ "\tmovq " ++ showRegLoc r ++ ", %rax\n",
-                            BStr $ "\tmovq %rax, " ++ showRegLoc newRegLoc ++ "\n"
-                        ]
+                    return $ moveRegsLocs r newRegLoc
 
 getIdentRegLoc :: BNFC'Position -> Ident -> CompilerMonad RegLoc
 getIdentRegLoc pos ident = do
@@ -197,13 +192,21 @@ getVarRegLoc (ArrayVar pos arrVar expr) = do
 getVarRegLoc (AttrVar pos var attrIdent) = throwError "unimplemented"
 
 calcExprType :: Expr -> CompilerMonad Type
-calcExprType (ENew pos new) = throwError "unimplemented"
+calcExprType (ENew pos new) =
+    case new of
+        NewBase pos tp -> return tp
+        NewArray pos newTp expr -> do
+            arrTp <- calcExprType (ENew pos newTp)
+            return (Array pos arrTp) 
 calcExprType (EVar pos var) = getVarType var
 calcExprType (ELitInt pos n) = return $ Int pos
 calcExprType (ELitTrue pos) = return $ Bool pos
 calcExprType (ELitFalse pos) = return $ Bool pos
-calcExprType (ELitArr pos exprs) = throwError "unimplemented"
-calcExprType (ELitNull pos ident) = throwError "unimplemented"
+calcExprType (ELitArr pos []) = return $ Array pos $ Class pos $ Ident "Object"
+calcExprType (ELitArr pos (expr:exprs)) = do
+    tp <- calcExprType expr
+    return $ Array pos tp
+calcExprType (ELitNull pos ident) = return $ Class pos $ Ident "Object"
 calcExprType (EApp pos var exprs) = do
     tp <- getVarType var
     case tp of
@@ -252,7 +255,7 @@ compileIf (EAnd pos expr0 expr1) lt lf = do
 compileIf (ERel pos expr0 op expr1) lt lf = do
     (code1, r1') <- compileExpr expr0
     (code2, r2) <- compileExpr expr1
-    (codeMoveR1, r1) <- if r1' == Reg rax
+    (codeMoveR1, r1) <- if r1' == Reg rax || r1' == Reg rdx
         then do
             r1 <- getFreeRegLoc
             return (moveRegsLocs r1' r1, r1)
@@ -273,6 +276,7 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
             NE _ -> BStr $ "\tjne " ++ lt ++ "\n"
     return $ BLst [
             code1,
+            codeMoveR1,
             code2,
             codeCmp,
             codeJmpTrue,
@@ -282,7 +286,7 @@ compileIf expr lt lf = do
     (code, regLoc) <- compileExpr expr
     return $ BLst [
         code,
-        BStr $ "\tmovq " ++ showRegLoc regLoc ++ ", %rax\n",
+        moveRegsLocs regLoc (Reg rax),
         BStr  "\ttest %rax, %rax\n",
         BStr $ "\tjz " ++ lf ++ "\n",
         BStr $ "\tjmp " ++ lt ++ "\n"
@@ -294,10 +298,10 @@ compileExpr' (ENew pos newVar) r = do
         NewBase newPos tp -> case tp of
             Class tpPos classIdent -> throwError "unimplemented"
             Str tpPos -> return $ BLst [
-                    BStr $ "\tmovq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
+                    moveRegsLocs (Lit 1) argRegLoc0,
                     BStr   "\tcall malloc\n",
-                    BStr   "\tmovq $0, 0(%rax)\n",
-                    BStr $ "\tmovq %rax, " ++ showRegLoc r ++ "\n"
+                    moveRegsLocs (Lit 0) (Mem 0 (Reg rax) (Lit 0) 0),
+                    moveRegsLocs (Reg rax) r
                 ]
             _ -> compileExpr' (ELitInt pos 0) r
         NewArray newPos internalNew expr -> do
@@ -323,7 +327,7 @@ compileExpr' (ENew pos newVar) r = do
                     BStr $ "\tshl $3, " ++ showRegLoc argRegLoc0 ++ "\n",
                     BStr   "\tcall malloc\n",
                     moveRegsLocs argRegLoc1 (Mem 8 (Reg rax) (Lit 0) 0),
-                    BStr $ "\tmovq %rax, " ++ showRegLoc reg ++ "\n",
+                    moveRegsLocs (Reg rax) reg,
                     BStr $ loopLabel ++ ":\n",
                     BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
                     internalNewCode,
@@ -437,7 +441,7 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                 then (BStr $ "\tmovq %rax, " ++ showRegLoc regLoc ++ "\n", regLoc)
                 else if r1 == Reg rdx
                 then (BStr $ "\tmovq %rdx, " ++ showRegLoc regLoc ++ "\n", regLoc)
-                else (BStr "", r1)
+                else (BLst [], r1)
             let isReg = case (r, r3) of
                     (Reg _, _) -> True
                     (_, Reg _) -> True
@@ -578,9 +582,9 @@ compileExpr (EMul pos expr1 op expr2) = do
                 then do
                     rr <- getFreeRegLoc
                     return (rr, BStr $ "\tmovq %rdx, " ++ showRegLoc rr ++ "\n")
-                else do return (r1, BStr "")
+                else do return (r1, BLst [])
             _ -> do 
-                return (r1, BStr "")
+                return (r1, BLst [])
     (code2, r2) <- compileExpr expr2
     (r25, code25) <- case r2 of 
             Reg rNr -> if rNr == rax
@@ -591,9 +595,9 @@ compileExpr (EMul pos expr1 op expr2) = do
                 then do
                     rr <- getFreeRegLoc
                     return (rr, BStr $ "\tmovq %rdx, " ++ showRegLoc rr ++ "\n")
-                else do return (r2, BStr "")
+                else do return (r2, BLst [])
             _ -> do 
-                return (r2, BStr "")
+                return (r2, BLst [])
     let (codeMul, outReg) = case op of
             Times _ -> (BStr $ "\timulq " ++ showRegLoc r25 ++ "\n", rax)
             Div _ -> (BStr $ "\tidivq " ++ showRegLoc r25 ++ "\n", rax)
@@ -727,7 +731,7 @@ compileStmt (SExp pos expr) = do
 addArgs' :: Stmt -> [RegLoc] -> [Arg] -> [(RegLoc, Arg)] -> CompilerMonad (StringBuilder, StringBuilder, Env -> Env)
 addArgs' stmt _ [] [] = do
     (codeStmt, envMod) <- compileStmt stmt
-    return (BStr "", codeStmt, envMod)
+    return (BLst [], codeStmt, envMod)
 addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
     loc <- newLoc
     regLocOut <- getFreeRegLoc
