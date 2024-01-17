@@ -12,7 +12,8 @@ import Data.Array (Array)
 import Data.Maybe
 import Distribution.System (OS(Windows, Linux), buildOS)
 
-type ClassForm = (Data.Map.Map Ident (Type, Int), Int)
+type TypeSize = Int
+type ClassForm = (Data.Map.Map Ident (Type, TypeSize), TypeSize)
 type EnvLoc = Data.Map.Map Ident Loc
 type EnvClass = Data.Map.Map Ident (ClassForm, Ident)
 
@@ -25,10 +26,17 @@ type BuiltInFunction = (Ident, Type, StringBuilder, StringBuilder)
 type Reg = Int
 data RegLoc = Reg Reg
     | RBP Int
-    deriving Show
+    | Lit Int
+    | Mem Int RegLoc RegLoc Int
+    deriving (Show, Eq)
 
 showRegLoc (Reg r) = showReg r
 showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
+showRegLoc (Lit n) = "$" ++ show n
+showRegLoc (Mem 0 ref (Lit 0) _) = "(" ++ showRegLoc ref ++ ")"
+showRegLoc (Mem n ref (Lit 0) _) = show n ++ "(" ++ showRegLoc ref ++ ")"
+showRegLoc (Mem 0 ref counter m) = "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
+showRegLoc (Mem n ref counter m) = show n ++ "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 
 rax :: Reg
 rsp = 0
@@ -60,6 +68,21 @@ argReg = case buildOS of
 argRegCount = length argReg
 argRegLoc0 = Reg $ head argReg
 argRegLoc1 = Reg $ argReg!!1
+argRegLoc2 = Reg $ argReg!!2
+
+moveRegsLocs :: RegLoc -> RegLoc -> StringBuilder
+moveRegsLocs (Lit 0) (Reg r) = BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n"
+moveRegsLocs (Lit n) regLoc = BStr $ "\tmovq " ++ showRegLoc (Lit n) ++ ", " ++ showRegLoc regLoc ++ "\n"
+moveRegsLocs (Reg r) regLoc = if Reg r /= regLoc
+                                then BStr $ "\tmovq " ++ showReg r ++ ", " ++ showRegLoc regLoc ++ "\n"
+                                else BLst []
+moveRegsLocs regLoc (Reg r) = if regLoc /= Reg r 
+                                then BStr $ "\tmovq " ++ showRegLoc regLoc ++ ", " ++ showReg r ++ "\n"
+                                else BLst []
+moveRegsLocs regLoc1 regLoc2 = if regLoc1 /= regLoc2
+                                then BStr $ "\tmovq " ++ showRegLoc regLoc1 ++ ", " ++ showReg rax ++ "\n"
+                                    ++ "\tmovq " ++ showReg rax ++ ", " ++ showRegLoc regLoc2 ++ "\n"
+                                else BLst []
 
 argToType :: Arg -> Type
 argToType (Arg _pos tp _ident) = tp
