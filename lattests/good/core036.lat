@@ -1,0 +1,13 @@
+int one() {
+    return 1;
+}
+
+int three(int onev) {
+    int a = one() + onev + one();
+    return a;
+}
+
+int main() {
+    printInt(three(1));
+    return 0;
+}
