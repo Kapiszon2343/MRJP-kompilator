@@ -29,4 +29,4 @@ runCompiler program filePath fileName = do
                     exitFailure
                 Right llvmCode -> do
                     writeFile (filePath ++ "/" ++ fileName ++ ".s") llvmCode
-                    callCommand $ "gcc " ++ filePath ++ "/" ++ fileName ++ ".s -o" ++ filePath ++ "/" ++ fileName
+                    callCommand $ "gcc -z noexecstack " ++ filePath ++ "/" ++ fileName ++ ".s -o" ++ filePath ++ "/" ++ fileName
