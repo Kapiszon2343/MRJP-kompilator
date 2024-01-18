@@ -678,12 +678,15 @@ compileStmt (CondElse pos expr stmtTrue stmtFalse) = do
         ], id)
 compileStmt (While pos expr stmt) = do
     labelLoop <- newLabel
+    labelCond <- newLabel
     labelExit <- newLabel
     codeCond <- compileIf expr labelLoop labelExit
     (codeLoop, blockEnvMod) <- compileStmt stmt
     return (BLst [
+            BStr $ "\tjmp " ++ labelExit ++ "\n",
             BStr $ labelLoop ++ ":\n",
             codeLoop,
+            BStr $ labelCond ++ ":\n",
             codeCond,
             BStr $ labelExit ++ ":\n"
         ], id)
