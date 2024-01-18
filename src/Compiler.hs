@@ -267,7 +267,7 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
             (Reg _, _) -> BStr $ "\tcmp " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
             (_, Reg _) -> BStr $ "\tcmp " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
             _ -> BLst [
-                    BStr $ "\tmovq " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n",
+                    moveRegsLocs r2 (Reg rax),
                     BStr $ "\tcmp " ++ showReg rax ++ ", " ++ showRegLoc r1 ++ "\n"
                 ]
     let codeJmpTrue = case op of
@@ -375,15 +375,15 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         code1,
                         code15,
                         code2,
-                        BStr $ "\tmovq " ++ showRegLoc r15 ++ ", %rax\n",
-                        BStr $ "\tmovq " ++ showRegLoc r2 ++ ", %rdx\n",
+                        moveRegsLocs r15 (Reg rax),
+                        moveRegsLocs r2 (Reg rdx),
                         BStr $ "\tpush " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tpush %r12\n",
                         BStr   "\tpush %r13\n",
 
-                        BStr   "\tmovq %rax, %r12\n",
-                        BStr   "\tmovq %rdx, %r13\n",
-                        BStr $ "\tmovq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        moveRegsLocs (Reg rax) (Reg 12),
+                        moveRegsLocs (Reg rdx) (Reg 13),
+                        moveRegsLocs (Lit 1) argRegLoc0,
 
                         BStr $ "\tjmp " ++ loopCond1 ++ "\n",
                         BStr $ loopStart1 ++ ":\n",
@@ -394,7 +394,7 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart1 ++ "\n",
                         
-                        BStr   "\tmovq %r13, %rax\n",
+                        moveRegsLocs (Reg 13) (Reg rax),
                         BStr $ "\tjmp " ++ loopCond2 ++ "\n",
                         BStr $ loopStart2 ++ ":\n",
                         BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
@@ -405,7 +405,7 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         BStr $ "\tjnz " ++ loopStart2 ++ "\n",
                         
                         BStr   "\tcall malloc\n",
-                        BStr $ "\tmovq %rax, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        moveRegsLocs (Reg rax) argRegLoc0,
                            
                         BStr $ "\tjmp " ++ loopCond3 ++ "\n",
                         BStr $ loopStart3 ++ ":\n",
@@ -431,7 +431,7 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         BStr   "\tpop %r13\n",
                         BStr   "\tpop %r12\n",
                         BStr $ "\tpop " ++ showRegLoc argRegLoc0 ++ "\n",
-                        BStr $ "\tmovq %rax, " ++ showRegLoc r ++ "\n"
+                        moveRegsLocs (Reg rax) r
                     ]
         _ -> do
             (code1, r1) <- compileExpr expr0
@@ -444,12 +444,12 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             let codeAdd = case (isReg, op) of
                     (True, Plus _) -> BStr $ "\tadd " ++ showRegLoc r15 ++ ", " ++ showRegLoc r ++ "\n"
                     (False, Plus _) -> BLst [
-                            BStr $ "\tmovq " ++ showRegLoc r15 ++ ", " ++ showReg rax ++ "\n",
+                            moveRegsLocs r15 (Reg rax),
                             BStr $ "\tadd " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
                         ]
                     (True, Minus _) -> BStr $ "\tsub " ++ showRegLoc r ++ ", " ++ showRegLoc r15 ++ "\n"
                     (False, Minus _) -> BLst [
-                            BStr $ "\tmovq " ++ showRegLoc r ++ ", " ++ showReg rax ++ "\n",
+                            moveRegsLocs r (Reg rax),
                             BStr $ "\tsub " ++ showReg rax ++ ", " ++ showRegLoc r15 ++ "\n",
                             moveRegsLocs r15 r
                         ]
@@ -518,6 +518,7 @@ fillArgs ((Reg reg):regLocs) (expr:exprs) = do
     return (BLst [
             freeCode,
             exprCode,
+            moveCode,
             tailCode,
             moveRegsLocs regLoc argRegLoc
         ],
@@ -555,13 +556,15 @@ compileExpr (EApp pos var exprs) = do
         )
 -- compileExpr (EString pos str) = 
 compileExpr (ENeg pos expr) = do
-    (code, r) <- compileExpr expr
-    return (BLst [
-            code,
-            moveRegsLocs (Lit 0) (Reg rax),
-            BStr $ "\tsub " ++ showRegLoc r ++ ", %rax\n",
-            moveRegsLocs (Reg rax) r
-        ], r)
+    (code, regLoc) <- compileExpr expr
+    case regLoc of
+        Lit n -> return (BLst [], Lit (-n))
+        _ -> return (BLst [
+                    code,
+                    moveRegsLocs (Lit 0) (Reg rax),
+                    BStr $ "\tsub " ++ showRegLoc regLoc ++ ", %rax\n",
+                    moveRegsLocs (Reg rax) regLoc
+                ], regLoc)
 compileExpr (ENot pos expr) = do
     (code, r) <- compileExpr expr
     return (BLst [
@@ -573,7 +576,11 @@ compileExpr (EMul pos expr1 op expr2) = do
     (code1, r1) <- compileExpr expr1
     (code15, r15) <- maybeMoveReg r1
     (code2, r2) <- compileExpr expr2
-    (code25, r25) <- maybeMoveReg r2
+    (code25, r25) <- case r2 of
+        Lit _ -> do
+            r25 <- getFreeRegLoc
+            return (moveRegsLocs r2 r25, r25)
+        _ -> maybeMoveReg r2
     let (codeMul, outReg) = case op of
             Times _ -> (BStr $ "\timulq " ++ showRegLoc r25 ++ "\n", rax)
             Div _ -> (BStr $ "\tidivq " ++ showRegLoc r25 ++ "\n", rax)
@@ -705,14 +712,7 @@ addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
     regLocOut <- getFreeRegLoc
     ((lt,l), vrc, rlu, nextLabel, (currStack, maxStack), strCodes) <- get
     (envVar, envClass) <- ask
-    codeMov <- case regLocIn of
-            Reg _ -> do
-                return (BStr $ "\tmovq " ++ showRegLoc regLocIn ++ ", " ++ showRegLoc regLocOut ++ "\n")
-            _ -> do
-                return (BLst [
-                        BStr $ "\tmovq " ++ showRegLoc regLocIn ++ ", %rax\n",
-                        BStr $ "\tmovq %rax, " ++ showRegLoc regLocOut ++ "\n"
-                    ])
+    let codeMov = moveRegsLocs regLocIn regLocOut
     put (
         (Data.Map.insert loc tp lt, l), 
         Data.Map.insert loc regLocOut vrc, 
