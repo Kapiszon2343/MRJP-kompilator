@@ -191,12 +191,16 @@ getVarRegLoc (ArrayVar pos arrVar expr) = do
     return (BLst [codeVar, codeIdx], Mem 16 regVar regIdx 8)
 getVarRegLoc (AttrVar pos var attrIdent) = throwError "unimplemented"
 
+maybeMoveReg' :: [Reg] -> RegLoc -> CompilerMonad (StringBuilder, RegLoc)
+maybeMoveReg' [] reg = return (BLst [], reg)
+maybeMoveReg' (reg:regs) regLoc = if regLoc == Reg reg
+    then do
+        newRegLoc <- getFreeRegLoc
+        return (moveRegsLocs regLoc newRegLoc, newRegLoc)
+    else maybeMoveReg' regs regLoc
+
 maybeMoveReg :: RegLoc -> CompilerMonad (StringBuilder, RegLoc)
-maybeMoveReg reg = if reg == Reg rax || reg == Reg rdx
-                then do
-                    regLoc <- getFreeRegLoc
-                    return (moveRegsLocs reg regLoc, regLoc)
-                else return (BLst [], reg)
+maybeMoveReg = maybeMoveReg' (rax:argReg)
 
 calcExprType :: Expr -> CompilerMonad Type
 calcExprType (ENew pos new) =
