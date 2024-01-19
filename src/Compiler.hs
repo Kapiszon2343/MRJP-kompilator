@@ -265,14 +265,18 @@ compileIf (EAnd pos expr0 expr1) lt lf = do
         ]
 compileIf (ERel pos expr0 op expr1) lt lf = do
     (code1, r1') <- compileExpr expr0
-    (code2, r2) <- compileExpr expr1
     (codeMoveR1, r1) <- maybeMoveReg r1'
+    (code2, r2) <- compileExpr expr1
     let codeCmp = case (r1, r2) of
-            (Reg _, _) -> BStr $ "\tcmp " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
-            (_, Reg _) -> BStr $ "\tcmp " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
+            (_, Lit n2) -> BLst [ -- TODO OPT
+                    moveRegsLocs r1 (Reg rax),
+                    BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n"
+                ]
+            (Reg _, _) -> BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
+            (_, Reg _) -> BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
             _ -> BLst [
-                    moveRegsLocs r2 (Reg rax),
-                    BStr $ "\tcmp " ++ showReg rax ++ ", " ++ showRegLoc r1 ++ "\n"
+                    moveRegsLocs r1 (Reg rax),
+                    BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n"
                 ]
     let codeJmpTrue = case op of
             LTH _ -> BStr $ "\tjl " ++ lt ++ "\n"
@@ -440,20 +444,31 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
         _ -> do
             (code1, r1) <- compileExpr expr0
             (code15, r15) <- maybeMoveReg r1
-            code2 <- compileExpr' expr1 r
-            let isReg = case (r, r15) of
+            (code2, r2) <- if r15 == r
+                then compileExpr expr1
+                else do
+                    code2 <- compileExpr' expr1 r
+                    return (code2, r)
+            let isReg = case (r2, r15) of
                     (Reg _, _) -> True
                     (_, Reg _) -> True
                     _ -> False
             let codeAdd = case (isReg, op) of
-                    (True, Plus _) -> BStr $ "\tadd " ++ showRegLoc r15 ++ ", " ++ showRegLoc r ++ "\n"
+                    (True, Plus _) -> BLst [
+                            BStr $ "\tadd " ++ showRegLoc r15 ++ ", " ++ showRegLoc r2 ++ "\n",
+                            moveRegsLocs r2 r
+                        ]
                     (False, Plus _) -> BLst [
                             moveRegsLocs r15 (Reg rax),
-                            BStr $ "\tadd " ++ showReg rax ++ ", " ++ showRegLoc r ++ "\n"
+                            BStr $ "\tadd " ++ showReg rax ++ ", " ++ showRegLoc r2 ++ "\n",
+                            moveRegsLocs r2 r
                         ]
-                    (True, Minus _) -> BStr $ "\tsub " ++ showRegLoc r ++ ", " ++ showRegLoc r15 ++ "\n"
+                    (True, Minus _) -> BLst [
+                            BStr $ "\tsub " ++ showRegLoc r2 ++ ", " ++ showRegLoc r15 ++ "\n",
+                            moveRegsLocs r15 r
+                        ]
                     (False, Minus _) -> BLst [
-                            moveRegsLocs r (Reg rax),
+                            moveRegsLocs r2 (Reg rax),
                             BStr $ "\tsub " ++ showReg rax ++ ", " ++ showRegLoc r15 ++ "\n",
                             moveRegsLocs r15 r
                         ]
