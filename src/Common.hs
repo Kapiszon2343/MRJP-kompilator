@@ -71,7 +71,7 @@ argRegLoc1 = Reg $ argReg!!1
 argRegLoc2 = Reg $ argReg!!2
 
 moveRegsLocs :: RegLoc -> RegLoc -> StringBuilder
-moveRegsLocs (Lit 0) (Reg r) = BStr $ "\txor " ++ showReg r ++ ", " ++ showReg r ++ "\n"
+moveRegsLocs (Lit 0) (Reg r) = BStr $ "\txorq " ++ showReg r ++ ", " ++ showReg r ++ "\n"
 moveRegsLocs (Lit n) regLoc = BStr $ "\tmovq " ++ showRegLoc (Lit n) ++ ", " ++ showRegLoc regLoc ++ "\n"
 moveRegsLocs (Reg r) regLoc = if Reg r /= regLoc
                                 then BStr $ "\tmovq " ++ showReg r ++ ", " ++ showRegLoc regLoc ++ "\n"
