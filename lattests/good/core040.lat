@@ -1,0 +1,21 @@
+int main() {
+    printInt(3 * (ff(4,3,5,15,14,7,0,3,9,15,-11) / 64 + 19));
+    return 0;
+}
+
+int ff(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j, int k) {
+    if (a == 0) {
+        int r = h+i+j+k; 
+        printInt(r);
+        return r;
+    }
+    else {
+        int r = b * c * ff(a-1,b,c,d,e,f,g,h,i,j,k) / d;
+        printInt(r);
+        r = r * e / f;
+        printInt(r);
+        r = g - r; 
+        printInt(r);
+        return r;
+    }
+}
