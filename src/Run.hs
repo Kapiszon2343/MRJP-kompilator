@@ -8,6 +8,7 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except
 import Data.Either
+import Distribution.System (OS(Windows, Linux), buildOS)
 
 import Latte.Abs
 import System.IO (hPutStrLn, stderr)
@@ -29,4 +30,6 @@ runCompiler program filePath fileName = do
                     exitFailure
                 Right llvmCode -> do
                     writeFile (filePath ++ "/" ++ fileName ++ ".s") llvmCode
-                    callCommand $ "gcc -z noexecstack " ++ filePath ++ "/" ++ fileName ++ ".s -o" ++ filePath ++ "/" ++ fileName
+                    case buildOS of
+                        Windows -> callCommand $ "gcc " ++ filePath ++ "/" ++ fileName ++ ".s -o" ++ filePath ++ "/" ++ fileName
+                        Linux -> callCommand $ "gcc -z noexecstack " ++ filePath ++ "/" ++ fileName ++ ".s -o" ++ filePath ++ "/" ++ fileName
