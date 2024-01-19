@@ -694,7 +694,7 @@ compileStmt (While pos expr stmt) = do
     codeCond <- compileIf expr labelLoop labelExit
     (codeLoop, blockEnvMod) <- compileStmt stmt
     return (BLst [
-            BStr $ "\tjmp " ++ labelExit ++ "\n",
+            BStr $ "\tjmp " ++ labelCond ++ "\n",
             BStr $ labelLoop ++ ":\n",
             codeLoop,
             BStr $ labelCond ++ ":\n",
