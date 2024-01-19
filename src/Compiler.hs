@@ -534,13 +534,13 @@ compileExpr' expr r = do
             moveRegsLocs rr r
         ]
 
-fillArgs :: [RegLoc] -> [Expr] -> CompilerMonad (StringBuilder, StringBuilder)
+fillArgs :: [RegLoc] -> [Expr] -> CompilerMonad (StringBuilder, Int)
 fillArgs ((Reg reg):regLocs) (expr:exprs) = do
     let argRegLoc = Reg reg
     freeCode <- freeRegLoc argRegLoc
     (exprCode, r) <- compileExpr expr
     (moveCode, regLoc) <- maybeMoveReg r
-    (tailCode, popCode) <- fillArgs regLocs exprs
+    (tailCode, stackAdd) <- fillArgs regLocs exprs
     return (BLst [
             freeCode,
             exprCode,
@@ -548,18 +548,18 @@ fillArgs ((Reg reg):regLocs) (expr:exprs) = do
             tailCode,
             moveRegsLocs regLoc argRegLoc
         ],
-        popCode)
+        stackAdd)
 fillArgs regLocs (expr:exprs) = do
     (exprCode, reg) <- compileExpr expr
-    (tailCode, popCode) <- fillArgs regLocs exprs
+    (tailCode, stackAdd) <- fillArgs regLocs exprs
     return (BLst [
             exprCode,
             moveRegsLocs reg (Reg rax),
             BStr   "\tpush %rax\n",
             tailCode
         ],
-        BLst[BStr "\tpop %rax\n", popCode])
-fillArgs _ [] = return (BLst [], BLst [])
+        stackAdd + 8)
+fillArgs _ [] = return (BLst [], 0)
 
 compileExpr :: Expr -> CompilerMonad (StringBuilder, RegLoc)
 -- compileExpr (ENew pos newVar) = 
@@ -571,12 +571,12 @@ compileExpr (ELitFalse pos) = compileExpr (ELitInt pos 0)
 compileExpr (ELitArr pos elems) = throwError "unimplemented"
 compileExpr (ELitNull pos classIdent) = compileExpr (ELitInt pos 0)
 compileExpr (EApp pos var exprs) = do
-    (fillCode, popCode) <- fillArgs (argRegLocs argRegCount) exprs
+    (fillCode, stackAdd) <- fillArgs (argRegLocs argRegCount) exprs
     return (
             BLst [
                 fillCode,
                 BStr $ "\tcall " ++ showVar var ++ "\n", -- TODO Maybe check for arrays
-                popCode
+                BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n" 
             ],
             Reg rax
         )

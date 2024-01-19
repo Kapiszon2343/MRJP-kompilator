@@ -38,16 +38,26 @@ showRegLoc (Mem n ref (Lit 0) _) = show n ++ "(" ++ showRegLoc ref ++ ")"
 showRegLoc (Mem 0 ref counter m) = "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 showRegLoc (Mem n ref counter m) = show n ++ "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 
-rax :: Reg
+
+rsp :: Reg
 rsp = 0
+rbp :: Reg
 rbp = 1
+rbx :: Reg
 rbx = 2
+rax :: Reg
 rax = 3
+rdx :: Reg
 rdx = 4
+rsi :: Reg
 rsi = 5
+rdi :: Reg
 rdi = 6
+rcx :: Reg
 rcx = 7
+r8 :: Reg
 r8 = 8
+r9 :: Reg
 r9 = 9
 
 showReg :: Reg -> String
