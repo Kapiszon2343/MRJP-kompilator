@@ -592,7 +592,8 @@ compileExpr (ENot pos expr) = do
     (code, r) <- compileExpr expr
     return (BLst [
             code,
-            BStr $ "\txorq $1, " ++ showRegLoc r ++ "\n"
+            moveRegsLocs r (Reg rax),
+            BStr $ "\txorq $1, " ++ showRegLoc (Reg rax) ++ "\n"
         ]
         , r)
 compileExpr (EMul pos expr1 op expr2) = do
