@@ -267,16 +267,19 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
     (code1, r1') <- compileExpr expr0
     (codeMoveR1, r1) <- maybeMoveReg r1'
     (code2, r2) <- compileExpr expr1
+    let tmpReg = if r2 == Reg rax
+        then argRegLoc1
+        else Reg rax
     let codeCmp = case (r1, r2) of
-            (_, Lit n2) -> BLst [ -- TODO OPT
-                    moveRegsLocs r1 (Reg rax),
-                    BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n"
+            (Lit n1, _) -> BLst [ -- TODO OPT
+                    moveRegsLocs r1 tmpReg,
+                    BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showRegLoc tmpReg ++ "\n"
                 ]
             (Reg _, _) -> BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
             (_, Reg _) -> BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showRegLoc r1 ++ "\n"
             _ -> BLst [
-                    moveRegsLocs r1 (Reg rax),
-                    BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showReg rax ++ "\n"
+                    moveRegsLocs r1 tmpReg,
+                    BStr $ "\tcmpq " ++ showRegLoc r2 ++ ", " ++ showRegLoc tmpReg ++ "\n"
                 ]
     let codeJmpTrue = case op of
             LTH _ -> BStr $ "\tjl " ++ lt ++ "\n"
@@ -379,18 +382,21 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             loopStart3 <- newLabel
             loopCond4 <- newLabel
             loopStart4 <- newLabel
+            let (tmpReg1, tmpReg2) = if r15 == Reg rax || r2 == Reg rdx
+                then (Reg rdx, Reg rax)
+                else (Reg rax, Reg rdx)
             return $ BLst [
                         code1,
                         code15,
                         code2,
-                        moveRegsLocs r2 (Reg rdx),
-                        moveRegsLocs r15 (Reg rax),
+                        moveRegsLocs r2 tmpReg2,
+                        moveRegsLocs r15 tmpReg1,
                         BStr $ "\tpush " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tpush %r12\n",
                         BStr   "\tpush %r13\n",
 
-                        moveRegsLocs (Reg rax) (Reg 12),
-                        moveRegsLocs (Reg rdx) (Reg 13),
+                        moveRegsLocs tmpReg1 (Reg 12),
+                        moveRegsLocs tmpReg2 (Reg 13),
                         moveRegsLocs (Lit 1) argRegLoc0,
 
                         BStr $ "\tjmp " ++ loopCond1 ++ "\n",
@@ -595,7 +601,7 @@ compileExpr (ENot pos expr) = do
             moveRegsLocs r (Reg rax),
             BStr $ "\txorq $1, " ++ showRegLoc (Reg rax) ++ "\n"
         ]
-        , r)
+        , Reg rax)
 compileExpr (EMul pos expr1 op expr2) = do
     (code1, r1) <- compileExpr expr1
     (code15, r15) <- maybeMoveReg r1
