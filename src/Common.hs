@@ -163,9 +163,9 @@ builtInFunctions = [
         ++ "\tsub $32, %rsp\n"
         ++ "\tleaq .error(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall printf\n"
-        ++ "\tmov $60, %eax\n"
-        ++ "\tmov $0, %ebx\n"
-        ++ "\tint $0x80\n",
+        ++ "\tmov $60, %rax\n"
+        ++ "\tmov $0, " ++ showRegLoc argRegLoc0  ++ "\n"
+        ++ "\tsyscall\n",
         BStr ".error: .ascii \"runtime error\\n\\0\"\n"),
     (Ident "readInt", Fun Nothing (Int Nothing) [], BStr 
         $ "readInt:\n"
