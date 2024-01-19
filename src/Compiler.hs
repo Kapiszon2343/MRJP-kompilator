@@ -383,8 +383,8 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         code1,
                         code15,
                         code2,
-                        moveRegsLocs r15 (Reg rax),
                         moveRegsLocs r2 (Reg rdx),
+                        moveRegsLocs r15 (Reg rax),
                         BStr $ "\tpush " ++ showRegLoc argRegLoc0 ++ "\n",
                         BStr   "\tpush %r12\n",
                         BStr   "\tpush %r13\n",
@@ -444,33 +444,34 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
         _ -> do
             (code1, r1) <- compileExpr expr0
             (code15, r15) <- maybeMoveReg r1
-            (code2, r2) <- if r15 == r
-                then compileExpr expr1
-                else do
-                    code2 <- compileExpr' expr1 r
-                    return (code2, r)
+            (code2, r2) <- compileExpr expr1
             let isReg = case (r2, r15) of
                     (Reg _, _) -> True
                     (_, Reg _) -> True
                     _ -> False
+            let tmpReg = if r == argRegLoc0
+                then argRegLoc1
+                else argRegLoc0
             let codeAdd = case (isReg, op) of
                     (True, Plus _) -> BLst [
-                            BStr $ "\tadd " ++ showRegLoc r15 ++ ", " ++ showRegLoc r2 ++ "\n",
-                            moveRegsLocs r2 r
+                            moveRegsLocs r2 tmpReg,
+                            moveRegsLocs r15 r,
+                            BStr $ "\tadd " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
                         ]
                     (False, Plus _) -> BLst [
-                            moveRegsLocs r15 (Reg rax),
-                            BStr $ "\tadd " ++ showReg rax ++ ", " ++ showRegLoc r2 ++ "\n",
-                            moveRegsLocs r2 r
+                            moveRegsLocs r2 tmpReg,
+                            moveRegsLocs r15 r,
+                            BStr $ "\tadd " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
                         ]
                     (True, Minus _) -> BLst [
-                            BStr $ "\tsub " ++ showRegLoc r2 ++ ", " ++ showRegLoc r15 ++ "\n",
-                            moveRegsLocs r15 r
+                            moveRegsLocs r2 tmpReg,
+                            moveRegsLocs r15 r,
+                            BStr $ "\tsub " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
                         ]
                     (False, Minus _) -> BLst [
-                            moveRegsLocs r2 (Reg rax),
-                            BStr $ "\tsub " ++ showReg rax ++ ", " ++ showRegLoc r15 ++ "\n",
-                            moveRegsLocs r15 r
+                            moveRegsLocs r2 tmpReg,
+                            moveRegsLocs r15 r,
+                            BStr $ "\tsub " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
                         ]
             return $ BLst [
                     code1,
@@ -576,13 +577,16 @@ compileExpr (EApp pos var exprs) = do
 -- compileExpr (EString pos str) = 
 compileExpr (ENeg pos expr) = do
     (code, regLoc) <- compileExpr expr
+    let regLoc2 = if regLoc == Reg rax
+        then argRegLoc0
+        else Reg rax
     case regLoc of
         Lit n -> return (BLst [], Lit (-n))
         _ -> return (BLst [
                     code,
-                    moveRegsLocs (Lit 0) (Reg rax),
-                    BStr $ "\tsub " ++ showRegLoc regLoc ++ ", %rax\n",
-                    moveRegsLocs (Reg rax) regLoc
+                    moveRegsLocs (Lit 0) regLoc2,
+                    BStr $ "\tsub " ++ showRegLoc regLoc ++ ", " ++ showRegLoc regLoc2 ++ "\n",
+                    moveRegsLocs regLoc2 regLoc
                 ], regLoc)
 compileExpr (ENot pos expr) = do
     (code, r) <- compileExpr expr
