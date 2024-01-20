@@ -572,11 +572,15 @@ compileExpr (ELitArr pos elems) = throwError "unimplemented"
 compileExpr (ELitNull pos classIdent) = compileExpr (ELitInt pos 0)
 compileExpr (EApp pos var exprs) = do
     (fillCode, stackAdd) <- fillArgs (argRegLocs argRegCount) exprs
+    let (codeAlignStack, stackAdd) = if mod stackAdd 16 > 0
+        then (BStr $ "\tsub " ++ showRegLoc (Lit (16 - mod stackAdd 16)) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n", stackAdd + 16 - mod stackAdd 16)
+        else (BLst [], stackAdd)
     let codeStackRestore = if stackAdd > 0
-                then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
-                else BLst []
+        then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
+        else BLst []
     return (
             BLst [
+                codeAlignStack,
                 fillCode,
                 BStr $ "\tcall " ++ showVar var ++ "\n", -- TODO Maybe check for arrays
                 codeStackRestore
