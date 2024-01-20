@@ -145,6 +145,18 @@ getFreeRegLoc = do
     -- TODO add registers
     getNextStack
 
+removeFirstTmp :: [LocUse] -> [LocUse]
+removeFirstTmp [] = []
+removeFirstTmp (TMPUse:refs) = refs
+removeFirstTmp (ref:refs) = ref:removeFirstTmp refs
+
+releaseTmpRegLoc :: RegLoc -> CompilerMonad ()
+releaseTmpRegLoc regLoc = do
+    (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
+    let ref = lookupArr regLoc rlu
+    let newRef = removeFirstTmp ref
+    put (lt, vrc, Data.Map.insert regLoc newRef rlu, nextLabel, stackState, strCodes)
+
 releaseReg :: Reg -> CompilerMonad ()
 releaseReg reg = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
@@ -278,6 +290,8 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
     let tmpReg = if r2 == Reg rax
         then argRegLoc1
         else Reg rax
+    releaseTmpRegLoc r1
+    releaseTmpRegLoc r2
     let codeCmp = case (r1, r2) of
             (Lit n1, _) -> BLst [ -- TODO OPT
                     moveRegsLocs r1 tmpReg,
@@ -306,6 +320,7 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
         ]
 compileIf expr lt lf = do
     (code, regLoc) <- compileExpr expr
+    releaseTmpRegLoc regLoc
     return $ BLst [
         code,
         moveRegsLocs regLoc (Reg rax),
@@ -326,7 +341,7 @@ compileExpr' (ENew pos newVar) r = do
                     moveRegsLocs (Reg rax) r
                 ]
             _ -> compileExpr' (ELitInt pos 0) r
-        NewArray newPos internalNew expr -> do
+        NewArray newPos internalNew expr -> do -- TODO releaseTmpRegLoc
             let (reg, freeCode2, restoreCode2) = case r of
                     Reg _ -> (r, BLst[], BLst[])
                     _ -> (argRegLoc2, 
@@ -390,6 +405,8 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             loopStart3 <- newLabel
             loopCond4 <- newLabel
             loopStart4 <- newLabel
+            releaseTmpRegLoc r15
+            releaseTmpRegLoc r2
             let (tmpReg1, tmpReg2) = if r15 == Reg rax || r2 == Reg rdx
                 then (Reg rdx, Reg rax)
                 else (Reg rax, Reg rdx)
@@ -466,6 +483,8 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             let tmpReg = if r == argRegLoc0
                 then argRegLoc1
                 else argRegLoc0
+            releaseTmpRegLoc r15
+            releaseTmpRegLoc r2
             let codeAdd = case (isReg, op) of
                     (True, Plus _) -> BLst [
                             moveRegsLocs r2 tmpReg,
@@ -537,6 +556,7 @@ compileExpr' (EOr pos expr0 expr1) r = do
         ]
 compileExpr' expr r = do
     (code, rr) <- compileExpr expr
+    releaseTmpRegLoc rr
     return $ BLst [
             code,
             moveRegsLocs rr r
@@ -549,6 +569,8 @@ fillArgs ((Reg reg):regLocs) (expr:exprs) = do
     (exprCode, r) <- compileExpr expr
     (moveCode, regLoc) <- maybeMoveReg r
     (tailCode, stackAdd) <- fillArgs regLocs exprs
+    releaseTmpRegLoc r
+    releaseTmpRegLoc regLoc
     return (BLst [
             freeCode,
             exprCode,
@@ -560,6 +582,7 @@ fillArgs ((Reg reg):regLocs) (expr:exprs) = do
 fillArgs regLocs (expr:exprs) = do
     (exprCode, reg) <- compileExpr expr
     (tailCode, stackAdd) <- fillArgs regLocs exprs
+    releaseTmpRegLoc reg
     return (BLst [
             exprCode,
             moveRegsLocs reg (Reg rax),
@@ -611,6 +634,7 @@ compileExpr (ENeg pos expr) = do
                 ], regLoc)
 compileExpr (ENot pos expr) = do
     (code, r) <- compileExpr expr
+    releaseTmpRegLoc r
     return (BLst [
             code,
             moveRegsLocs r (Reg rax),
@@ -630,6 +654,10 @@ compileExpr (EMul pos expr1 op expr2) = do
             Times _ -> (BStr $ "\timulq " ++ showRegLoc r25 ++ "\n", rax)
             Div _ -> (BStr $ "\tidivq " ++ showRegLoc r25 ++ "\n", rax)
             Mod _ -> (BStr $ "\tidivq " ++ showRegLoc r25 ++ "\n", rdx)
+    releaseTmpRegLoc r1
+    releaseTmpRegLoc r15
+    releaseTmpRegLoc r2
+    releaseTmpRegLoc r25
     return (BLst [
             code1,
             code15,
@@ -745,7 +773,8 @@ compileStmt (While pos expr stmt) = do
 compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = throwError "unimplemented"
 compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = throwError "unimplemented"
 compileStmt (SExp pos expr) = do
-    (code, _r) <- compileExpr expr
+    (code, r) <- compileExpr expr
+    releaseTmpRegLoc r
     return (code, id)
 
 addArgs' :: Stmt -> [RegLoc] -> [Arg] -> [(RegLoc, Arg)] -> CompilerMonad (StringBuilder, StringBuilder, Env -> Env)
