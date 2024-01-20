@@ -28,7 +28,9 @@ instance Ord RegLoc where
     compare (RBP _) _ = LT
     compare _ (RBP _) = GT
 type VariableRegisterLoc = Data.Map.Map Loc RegLoc 
-type RegisterLocUse = Data.Map.Map RegLoc [Ident]
+data LocUse = IdentUse Ident
+    | TMPUse
+type RegisterLocUse = Data.Map.Map RegLoc [LocUse]
 type StringCodes = (StringBuilder, Int)
 type StackState = (Int, Int)
 type LocTypes = (Data.Map.Map Loc Type, Int)
@@ -113,11 +115,17 @@ newLabel = do
     put (lt, vrc, rlu, nextLabel+1, stackState, strCodes)
     return $ "label_" ++ show nextLabel
 
+getNextStack' :: Int -> CompilerMonad RegLoc
+getNextStack' stackSize = do
+    (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
+    case lookupArr (RBP stackSize) rlu of
+        [] -> do
+            put (lt, vrc, Data.Map.insert (RBP stackSize) [TMPUse] rlu, nextLabel, (stackSize, max maxStackSize stackSize), strCodes)
+            return $ RBP stackSize
+        _ -> getNextStack' $ stackSize + 8
+
 getNextStack :: CompilerMonad RegLoc
-getNextStack = do
-    (lt, vrc, rlu, nextLabel, (currStackSize, maxStackSize), strCodes) <- get
-    put (lt, vrc, rlu, nextLabel, (currStackSize+8, max maxStackSize $ currStackSize+8), strCodes)
-    return $ RBP currStackSize
+getNextStack = getNextStack' 8
 
 getFreeReg' :: Reg -> CompilerMonad Reg
 getFreeReg' r = do
@@ -660,7 +668,7 @@ compileStmt (Decl _pos tp (decl:decls)) = do
     put (
         (Data.Map.insert loc tp lt, l), 
         Data.Map.insert loc regLoc vrc,
-        Data.Map.insert regLoc [ident] rlu, 
+        Data.Map.insert regLoc [IdentUse ident] rlu, 
         nextLabel, 
         stackState, 
         strCodes) -- TODO check if [ident] is correct
@@ -752,7 +760,7 @@ addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
     put (
         (Data.Map.insert loc tp lt, l), 
         Data.Map.insert loc regLocOut vrc, 
-        Data.Map.insert regLocOut [ident] rlu, 
+        Data.Map.insert regLocOut [IdentUse ident] rlu, 
         nextLabel, 
         (currStack, maxStack), 
         strCodes)
@@ -765,7 +773,7 @@ addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
     put (
             (Data.Map.insert loc tp lt, l), 
             Data.Map.insert loc regLoc vrc, 
-            Data.Map.insert regLoc [ident] rlu, 
+            Data.Map.insert regLoc [IdentUse ident] rlu, 
             nextLabel, 
             (currStack, maxStack), 
             strCodes)
