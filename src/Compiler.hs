@@ -572,11 +572,14 @@ compileExpr (ELitArr pos elems) = throwError "unimplemented"
 compileExpr (ELitNull pos classIdent) = compileExpr (ELitInt pos 0)
 compileExpr (EApp pos var exprs) = do
     (fillCode, stackAdd) <- fillArgs (argRegLocs argRegCount) exprs
+    let codeStackRestore = if stackAdd > 0
+                then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
+                else BLst []
     return (
             BLst [
                 fillCode,
                 BStr $ "\tcall " ++ showVar var ++ "\n", -- TODO Maybe check for arrays
-                BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n" 
+                codeStackRestore
             ],
             Reg rax
         )
