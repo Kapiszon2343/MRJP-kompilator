@@ -405,8 +405,11 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             loopStart3 <- newLabel
             loopCond4 <- newLabel
             loopStart4 <- newLabel
-            releaseTmpRegLoc r15
-            releaseTmpRegLoc r2
+            if r /= r15
+                then do
+                    releaseTmpRegLoc r15
+                    releaseTmpRegLoc r2
+                else releaseTmpRegLoc r2
             let (tmpReg1, tmpReg2) = if r15 == Reg rax || r2 == Reg rdx
                 then (Reg rdx, Reg rax)
                 else (Reg rax, Reg rdx)
