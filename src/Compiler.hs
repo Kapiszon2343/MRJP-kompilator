@@ -580,6 +580,7 @@ compileExpr (EApp pos var exprs) = do
         else BLst []
     return (
             BLst [
+                codeAlignStack,
                 fillCode,
                 BStr $ "\tcall " ++ showVar var ++ "\n", -- TODO Maybe check for arrays
                 codeStackRestore
