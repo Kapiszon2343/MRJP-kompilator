@@ -842,8 +842,9 @@ stableRegsToStack' (reg:regs) = do
     (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
     case Data.Map.lookup (Reg reg) rlu of
         Just _ -> do
+            let regLoc = RBP currStackSize
+            put (lt, vrc, rlu, nextLabel,  (currStackSize+8, max maxStackSize (currStackSize+8)), strCodes)
             (codePushTail, codePopTail) <- stableRegsToStack' regs
-            regLoc <- getNextStack
             let codePushThis = moveRegsLocs (Reg reg) regLoc
             let codePopThis = moveRegsLocs regLoc (Reg reg)
             return (BLst[codePushTail, codePushThis], BLst[codePopThis, codePopTail])
