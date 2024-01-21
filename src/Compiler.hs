@@ -42,10 +42,8 @@ type CompilerMonad = ExceptT String (ReaderT Env (StateT CompilerStore IO))
 
 type Ret = (Env -> Env, VarVal)
 
-stableRegs = [10..15]
-allRegs = [rax..15] -- TODO all registers
 argRegLocs :: Int -> [RegLoc]
-argRegLocs = argRegLocs' argReg
+argRegLocs = argRegLocs' argRegs
 
 argRegLocs' :: [Reg] -> Int -> [RegLoc]
 argRegLocs' _ 0 = []
@@ -137,13 +135,18 @@ getFreeReg' r = do
                 [] -> return r
                 _ -> getFreeReg' (r+1)
 
-getFreeReg :: CompilerMonad Reg
-getFreeReg = getFreeReg' (rax+1)
+getFreeRegLoc' :: [Reg] -> CompilerMonad RegLoc
+getFreeRegLoc' [] = getNextStack
+getFreeRegLoc' (reg:regs) = do
+    (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
+    case lookupArr (Reg reg) rlu of
+        [] -> do
+            put (lt, vrc, Data.Map.insert (Reg reg) [TMPUse] rlu, nextLabel, (currStackSize, maxStackSize), strCodes)
+            return $ Reg reg
+        _ -> getFreeRegLoc' regs
 
 getFreeRegLoc :: CompilerMonad RegLoc
-getFreeRegLoc = do
-    -- TODO add registers
-    getNextStack
+getFreeRegLoc = getFreeRegLoc' stableRegs
 
 removeFirstTmp :: [LocUse] -> [LocUse]
 removeFirstTmp [] = []
@@ -220,7 +223,7 @@ maybeMoveReg' (reg:regs) regLoc = if regLoc == Reg reg
     else maybeMoveReg' regs regLoc
 
 maybeMoveReg :: RegLoc -> CompilerMonad (StringBuilder, RegLoc)
-maybeMoveReg = maybeMoveReg' (rax:argReg)
+maybeMoveReg = maybeMoveReg' (rax:tmpRegs)
 
 calcExprType :: Expr -> CompilerMonad Type
 calcExprType (ENew pos new) =
@@ -413,15 +416,16 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             let (tmpReg1, tmpReg2) = if r15 == Reg rax || r2 == Reg rdx
                 then (Reg rdx, Reg rax)
                 else (Reg rax, Reg rdx)
+            stackSpace1 <- getNextStack
+            stackSpace2 <- getNextStack
             return $ BLst [
                         code1,
                         code15,
                         code2,
                         moveRegsLocs r2 tmpReg2,
                         moveRegsLocs r15 tmpReg1,
-                        BStr $ "\tpush " ++ showRegLoc argRegLoc0 ++ "\n",
-                        BStr   "\tpush %r12\n",
-                        BStr   "\tpush %r13\n",
+                        moveRegsLocs (Reg 12) stackSpace1,
+                        moveRegsLocs (Reg 13) stackSpace2,
 
                         moveRegsLocs tmpReg1 (Reg 12),
                         moveRegsLocs tmpReg2 (Reg 13),
@@ -470,9 +474,8 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         BStr $ "\tjnz " ++ loopStart4 ++ "\n",
                         
                         BStr $ "\tmovb $0, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
-                        BStr   "\tpop %r13\n",
-                        BStr   "\tpop %r12\n",
-                        BStr $ "\tpop " ++ showRegLoc argRegLoc0 ++ "\n",
+                        moveRegsLocs stackSpace2 (Reg 13),
+                        moveRegsLocs stackSpace1 (Reg 12),
                         moveRegsLocs (Reg rax) r
                     ]
         _ -> do
@@ -833,23 +836,43 @@ addArgs maxAppArgs stmt args =
             (shortenedArgRegLocs, shortenedArgs, moveArgs) <- moveRegArgs maxAppArgs regLocs args
             addArgs' stmt shortenedArgRegLocs shortenedArgs moveArgs
 
+stableRegsToStack' :: [Reg] -> CompilerMonad (StringBuilder, StringBuilder)
+stableRegsToStack' [] = return (BLst [], BLst [])
+stableRegsToStack' (reg:regs) = do
+    (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
+    case Data.Map.lookup (Reg reg) rlu of
+        Just _ -> do
+            (codePushTail, codePopTail) <- stableRegsToStack' regs
+            regLoc <- getNextStack
+            let codePushThis = moveRegsLocs (Reg reg) regLoc
+            let codePopThis = moveRegsLocs regLoc (Reg reg)
+            return (BLst[codePushTail, codePushThis], BLst[codePopThis, codePopTail])
+        Nothing -> stableRegsToStack' regs
+
+
+stableRegsToStack :: CompilerMonad (StringBuilder, StringBuilder)
+stableRegsToStack = stableRegsToStack' stableRegs
+
 compileTopDefs :: StringBuilder -> [TopDef] -> CompilerMonad StringBuilder
 compileTopDefs code ((FnDef pos tp ident args block):lst) = do
     (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
     put (lt0, Data.Map.empty, Data.Map.empty, nextLabel0, (8, 8), strCodes0)
     let maxAppArgs = digStmtInfoPub (BStmt pos block)
     (codeMov, currCode, _) <- addArgs maxAppArgs (BStmt pos block) args
+    (codePush, codePop) <- stableRegsToStack
     (lt, vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
-    let stackMax = 32 * div (oldStackMax + 31) 32
+    let stackMax = 16 * div (oldStackMax + 31) 16
     compileTopDefs (BLst [
             code,
             BStr $ showIdent ident ++ ":\n"
                 ++ "\tpush %rbp\n"
                 ++ "\tmovq %rsp, %rbp\n"
                 ++ "\tsub $" ++ show stackMax ++ ", %rsp\n",
+            codePush,
             codeMov,
             fillStringBuilder (Data.Map.singleton filRetN (
-                   "\tmovq %rbp, %rsp\n"
+                    buildString codePop
+                ++ "\tmovq %rbp, %rsp\n"
                 ++ "\tpop %rbp\n"
                 ++ "\tret\n")) (BLst [currCode, BFil filRetN])
         ]) lst

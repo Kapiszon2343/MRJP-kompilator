@@ -59,6 +59,10 @@ r8 :: Reg
 r8 = 8
 r9 :: Reg
 r9 = 9
+r10 :: Reg
+r10 = 10
+r11 :: Reg
+r11 = 11
 
 showReg :: Reg -> String
 showReg 0 = "%rsp"
@@ -71,14 +75,18 @@ showReg 6 = "%rdi"
 showReg 7 = "%rcx"
 showReg r = "%r" ++ show r
 
-argReg :: [Reg]
-argReg = case buildOS of
+stableRegs :: [Reg]
+stableRegs = [12..15]
+tmpRegs :: [Reg]
+tmpRegs = [rdi, rsi, rdx, rcx, r8, r9, r10, r11]
+argRegs :: [Reg]
+argRegs = case buildOS of
     Windows -> [rcx, rdx, r8, r9]
     Linux -> [rdi, rsi, rdx, rcx, r8, r9]
-argRegCount = length argReg
-argRegLoc0 = Reg $ head argReg
-argRegLoc1 = Reg $ argReg!!1
-argRegLoc2 = Reg $ argReg!!2
+argRegCount = length argRegs
+argRegLoc0 = Reg $ head argRegs
+argRegLoc1 = Reg $ argRegs!!1
+argRegLoc2 = Reg $ argRegs!!2
 
 moveRegsLocs :: RegLoc -> RegLoc -> StringBuilder
 moveRegsLocs (Lit 0) (Reg r) = BStr $ "\txorq " ++ showReg r ++ ", " ++ showReg r ++ "\n"
