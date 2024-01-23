@@ -619,7 +619,7 @@ compileExpr (EApp pos var exprs) = do
             BLst [
                 codeAlignStack,
                 fillCode,
-                BStr $ "\tcall " ++ showVar var ++ "\n", -- TODO Maybe check for arrays
+                BStr $ "\tcall " ++ functionLabel var ++ "\n", -- TODO Maybe check for arrays
                 codeStackRestore
             ],
             Reg rax
@@ -865,7 +865,7 @@ compileTopDefs code ((FnDef pos tp ident args block):lst) = do
     let stackMax = 16 * div (oldStackMax + 31) 16
     compileTopDefs (BLst [
             code,
-            BStr $ showIdent ident ++ ":\n"
+            BStr $ functionLabel (IdentVar pos ident) ++ ":\n"
                 ++ "\tpush %rbp\n"
                 ++ "\tmovq %rsp, %rbp\n"
                 ++ "\tsub $" ++ show stackMax ++ ", %rsp\n",

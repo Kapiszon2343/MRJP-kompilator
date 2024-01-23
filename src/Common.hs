@@ -146,6 +146,11 @@ showVar (IdentVar _ ident) = showIdent ident
 showVar (ArrayVar _ var _) = showVar var ++ "[int]"
 showVar (AttrVar _ var ident) = showVar var ++ "." ++ showIdent ident
 
+functionLabel :: Var -> String
+functionLabel (IdentVar _ ident) = "fun_" ++ showIdent ident
+functionLabel (ArrayVar _ var _) = showVar var
+functionLabel (AttrVar _ var ident) = "class_" ++ showVar var ++ "_" ++ showIdent ident
+
 builtInFunctions :: [BuiltInFunction]
 builtInFunctions = [
     (Ident "printInt", Fun Nothing (Void Nothing) [Int Nothing], BStr 
