@@ -212,7 +212,13 @@ getVarRegLoc (ArrayVar pos arrVar expr) = do
     (codeVar, regVar) <- getVarRegLoc arrVar
     (codeIdx, regIdx) <- compileExpr expr
     return (BLst [codeVar, codeIdx], Mem 16 regVar regIdx 8)
-getVarRegLoc (AttrVar pos var attrIdent) = throwError "unimplemented"
+getVarRegLoc (AttrVar pos var attrIdent) = do
+    tp <- getVarType var
+    (codeVar, regVar) <- getVarRegLoc var
+    case tp of
+        Array _pos _baseTp -> return (codeVar, Mem 8 regVar (Lit 0) 0)
+        Class _pos classIdent -> throwError "unimplemented"
+        _ -> throwError $ "Attribute call on type " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
 
 maybeMoveReg' :: [Reg] -> RegLoc -> CompilerMonad (StringBuilder, RegLoc)
 maybeMoveReg' [] reg = return (BLst [], reg)
