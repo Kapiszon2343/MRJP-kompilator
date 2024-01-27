@@ -344,40 +344,38 @@ compileExpr' (ENew pos newVar) r = do
                     moveRegsLocs (Reg rax) r
                 ]
             _ -> compileExpr' (ELitInt pos 0) r
-        NewArray newPos internalNew expr -> do -- TODO releaseTmpRegLoc
-            let (reg, freeCode2, restoreCode2) = case r of
-                    Reg _ -> (r, BLst[], BLst[])
-                    _ -> (argRegLoc2, 
-                        BStr $ "\tpush " ++ showRegLoc argRegLoc2 ++ "\n",
-                        BStr $ "\tpop " ++ showRegLoc argRegLoc2 ++ "\n")
-            let freeCode1 = BStr $ "\tpush " ++ showRegLoc argRegLoc1 ++ "\n"
-            let restoreCode1 = BStr $ "\tpop " ++ showRegLoc argRegLoc1 ++ "\n"
-            let freeCode0 = BStr $ "\tpush " ++ showRegLoc argRegLoc0 ++ "\n"
-            let restoreCode0 = BStr $ "\tpop " ++ showRegLoc argRegLoc0 ++ "\n"
-            exprCode <- compileExpr' expr argRegLoc1
+        NewArray newPos internalNew expr -> do
+            regLocLen <- getFreeRegLoc
+            regLocStoreMem1 <- getFreeRegLoc
+            regLocStoreMem2 <- getFreeRegLoc
+            let reg = case r of
+                    Reg _ -> r
+                    _ -> argRegLoc2
+            exprCode <- compileExpr' expr argRegLoc0
             loopLabel <- newLabel
             internalNewCode <- compileExpr' (ENew pos internalNew) (Mem 16 reg argRegLoc1 8)
+            releaseTmpRegLoc regLocLen
+            releaseTmpRegLoc regLocStoreMem1
+            releaseTmpRegLoc regLocStoreMem2
             return $ BLst [
-                    freeCode0,
-                    freeCode1,
-                    freeCode2,
+                    moveRegsLocs argRegLoc1 regLocStoreMem1,
+                    moveRegsLocs argRegLoc2 regLocStoreMem2,
                     exprCode,
-                    moveRegsLocs argRegLoc1 argRegLoc0,
+                    moveRegsLocs argRegLoc0 regLocLen,
                     BStr $ "\tadd $2, " ++ showRegLoc argRegLoc0 ++ "\n",
                     BStr $ "\tshl $3, " ++ showRegLoc argRegLoc0 ++ "\n",
                     BStr   "\tcall malloc\n",
-                    moveRegsLocs argRegLoc1 (Mem 8 (Reg rax) (Lit 0) 0),
+                    moveRegsLocs regLocLen argRegLoc1,
                     moveRegsLocs (Reg rax) reg,
+                    moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
                     BStr $ loopLabel ++ ":\n",
                     BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
                     internalNewCode,
                     BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
                     BStr $ "\tjnz " ++ loopLabel ++ "\n",
-                    moveRegsLocs reg (Reg rax),
-                    restoreCode2,
-                    restoreCode1,
-                    restoreCode0,
-                    moveRegsLocs (Reg rax) r
+                    moveRegsLocs regLocStoreMem1 argRegLoc1,
+                    moveRegsLocs regLocStoreMem2 argRegLoc2,
+                    moveRegsLocs reg r
                 ]
 compileExpr' (EString pos str) r = do
     (lt, vrc, rlu, nextLabel, stackState, (strCodes, strCodeNr)) <- get
