@@ -702,7 +702,7 @@ compileStmt (Decl _pos tp (decl:decls)) = do
             NoInit pos ident -> (ident, ELitInt pos 0)
             Init pos ident expr -> (ident, expr)
     loc <- newLoc
-    regLoc <- getNextStack -- TODO add using registers
+    regLoc <- getNextStack
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
         (Data.Map.insert loc tp lt, l), 
@@ -780,8 +780,90 @@ compileStmt (While pos expr stmt) = do
             codeCond,
             BStr $ labelExit ++ ":\n"
         ], id)
-compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = throwError "unimplemented"
-compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = throwError "unimplemented"
+compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = do
+    loc <- newLoc
+    regLoc <- getFreeRegLoc
+    ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (
+        (Data.Map.insert loc incrTp lt, l), 
+        Data.Map.insert loc regLoc vrc,
+        Data.Map.insert regLoc [IdentUse incrIdent] rlu, 
+        nextLabel, 
+        stackState, 
+        strCodes)
+    codeIncrSet <- compileExpr' incrSet regLoc
+    let envMod1 = first (Data.Map.insert incrIdent loc)
+    (retCode, _) <- local envMod1 $ compileStmt (
+            While pos cond (BStmt pos (Block pos [
+                blockStmt,
+                incrStmt
+            ])))
+    ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (
+        (lt, l), 
+        vrc,
+        Data.Map.insert regLoc [] rlu, 
+        nextLabel, 
+        stackState, 
+        strCodes)
+    return (BLst [
+            codeIncrSet,
+            retCode
+        ], id)
+compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
+    loc <- newLoc
+    regLocIt <- getFreeRegLoc
+    (getArrCode, regLocArr) <- compileExpr arrExpr
+    let regLocElem = Mem 16 regLocArr regLocIt 8 
+    ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (
+        (Data.Map.insert loc elemTp lt, l), 
+        Data.Map.insert loc regLocElem vrc,
+        Data.Map.insert regLocElem [IdentUse elemIdent] rlu, 
+        nextLabel, 
+        stackState, 
+        strCodes)
+    let codeIncrSet = moveRegsLocs (Lit 0) regLocIt
+    let envMod1 = first (Data.Map.insert elemIdent loc)
+    labelLoop <- newLabel
+    labelCond <- newLabel
+    labelExit <- newLabel
+    let codeCond = case regLocIt of
+            Reg _ -> BLst [
+                    BStr $ "\tcmp " ++ showRegLoc regLocIt ++ ", " ++ showRegLoc (Mem 8 regLocArr (Lit 0) 0) ++ "\n",
+                    BStr $ "\tjl " ++ labelLoop ++ "\n"
+                ]
+            _ -> BLst [
+                    moveRegsLocs regLocIt (Reg rax),
+                    BStr $ "\tcmp " ++ showRegLoc (Reg rax) ++ ", " ++ showRegLoc (Mem 8 regLocArr (Lit 0) 0) ++ "\n",
+                    BStr $ "\tjl " ++ labelLoop ++ "\n"
+                ]
+    let codeIterate = BLst [
+                BStr $ "\tincq " ++ showRegLoc regLocIt ++ "\n"
+            ]
+    (codeLoop, blockEnvMod) <- local envMod1 $ compileStmt blockStmt
+    let codeWhile = BLst [
+                BStr $ "\tjmp " ++ labelCond ++ "\n",
+                BStr $ labelLoop ++ ":\n",
+                codeLoop,
+                codeIterate,
+                BStr $ labelCond ++ ":\n",
+                codeCond,
+                BStr $ labelExit ++ ":\n"
+            ]
+    releaseTmpRegLoc regLocIt
+    ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (
+        (lt, l), 
+        vrc,
+        Data.Map.insert regLocElem [] rlu, 
+        nextLabel, 
+        stackState, 
+        strCodes)
+    return (BLst [
+            codeIncrSet,
+            codeWhile
+        ], id)
 compileStmt (SExp pos expr) = do
     (code, r) <- compileExpr expr
     releaseTmpRegLoc r
