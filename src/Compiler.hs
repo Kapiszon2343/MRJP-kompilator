@@ -128,7 +128,7 @@ getNextStack = getNextStack' 8
 getFreeReg' :: Reg -> CompilerMonad Reg
 getFreeReg' r = do
     if r > 15
-        then throwError "unimplemented"
+        then throwError "Attempting to get not existing register. No code should be able to reach this message"
         else do
             (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
             case lookupArr (Reg r) rlu of
@@ -147,6 +147,42 @@ getFreeRegLoc' (reg:regs) = do
 
 getFreeRegLoc :: CompilerMonad RegLoc
 getFreeRegLoc = getFreeRegLoc' stableRegs
+
+makeIntoReg :: RegLoc -> Reg -> CompilerMonad (StringBuilder, RegLoc)
+makeIntoReg (Reg r) _ = return (BLst [], Reg r)
+makeIntoReg regLoc r = return (moveRegsLocs regLoc (Reg r), Reg r)
+
+makeIntoReg2 :: RegLoc -> RegLoc -> Reg -> Reg -> CompilerMonad (StringBuilder, RegLoc, RegLoc)
+makeIntoReg2 (Reg r1) (Reg r2) _ _ = return (BLst [], Reg r1, Reg r2)
+makeIntoReg2 (Reg r) regLoc r1 r2 = if r2 == r
+    then return (moveRegsLocs regLoc (Reg r1), Reg r, Reg r1)
+    else return (moveRegsLocs regLoc (Reg r2), Reg r, Reg r2)
+makeIntoReg2 regLoc (Reg r) r1 r2 = do
+    (code, regLoc2, regLoc1) <- makeIntoReg2 (Reg r) regLoc r2 r1
+    return (code, regLoc1, regLoc2)
+makeIntoReg2 regLoc1 regLoc2 r1 r2 = return (BLst [
+        moveRegsLocs regLoc1 (Reg r1),
+        moveRegsLocs regLoc2 (Reg r2)
+    ], Reg r1, Reg r2)
+
+makeIntoLocal2 :: RegLoc -> RegLoc -> Reg -> Reg -> CompilerMonad (StringBuilder, RegLoc, RegLoc)
+makeIntoLocal2 (Reg r1) (Reg r2) _ _ = return (BLst [], Reg r1, Reg r2)
+makeIntoLocal2 (Reg r1) (Lit n2) _ _ = return (BLst [], Reg r1, Lit n2)
+makeIntoLocal2 (Lit n1) (Lit n2) _ _ = return (BLst [], Lit n1, Lit n2)
+makeIntoLocal2 regLoc (Reg r) r1 r2 = do
+    (code, regLoc2, regLoc1) <- makeIntoLocal2 (Reg r) regLoc r2 r1
+    return (code, regLoc1, regLoc2)
+makeIntoLocal2 regLoc (Lit n) r1 r2 = do
+    (code, regLoc2, regLoc1) <- makeIntoLocal2 (Lit n) regLoc r2 r1
+    return (code, regLoc1, regLoc2)
+makeIntoLocal2 (Reg r) regLoc r1 r2 = if r2 == r
+    then return (moveRegsLocs regLoc (Reg r1), Reg r, Reg r1)
+    else return (moveRegsLocs regLoc (Reg r2), Reg r, Reg r2)
+makeIntoLocal2 (Lit n) regLoc r1 r2 = return (moveRegsLocs regLoc (Reg r2), Lit n, Reg r2)
+makeIntoLocal2 regLoc1 regLoc2 r1 r2 = return (BLst [
+        moveRegsLocs regLoc1 (Reg r1),
+        moveRegsLocs regLoc2 (Reg r2)
+    ], Reg r1, Reg r2)
 
 removeFirstTmp :: [LocUse] -> [LocUse]
 removeFirstTmp [] = []
@@ -204,19 +240,36 @@ getIdentRegLoc pos ident = do
         Nothing -> throwError ("undefined variable " ++ show ident ++ " at " ++ show pos)
         Just regLoc -> return regLoc
 
+fixMemRegLoc :: RegLoc -> CompilerMonad (StringBuilder, RegLoc)
+fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocStart && isRegLocLocal regLocStep
+    then return (BLst [], Mem dist regLocStart regLocStep step)
+    else do
+        (codeMake, rVar, rIdx) <- makeIntoLocal2 regLocStart regLocStep rax rdx
+        releaseTmpRegLoc regLocStart
+        releaseTmpRegLoc regLocStep
+        retRegLoc <- getFreeRegLoc
+        return (BLst [
+            codeMake,
+            moveRegsLocs (Mem dist rVar rIdx step) retRegLoc
+            ], retRegLoc)
+fixMemRegLoc regLoc = return (BLst [], regLoc)
+
 getVarRegLoc :: Var -> CompilerMonad (StringBuilder, RegLoc)
 getVarRegLoc (IdentVar pos ident) = do
     regLoc <- getIdentRegLoc pos ident
-    return (BLst [], regLoc)
+    fixMemRegLoc regLoc
 getVarRegLoc (ArrayVar pos arrVar expr) = do
     (codeVar, regVar) <- getVarRegLoc arrVar
     (codeIdx, regIdx) <- compileExpr expr
-    return (BLst [codeVar, codeIdx], Mem 16 regVar regIdx 8)
+    (fixCode, retRegLoc) <- fixMemRegLoc (Mem 16 regVar regIdx 8)
+    return (BLst [codeVar, codeIdx, fixCode], retRegLoc)
 getVarRegLoc (AttrVar pos var attrIdent) = do
     tp <- getVarType var
     (codeVar, regVar) <- getVarRegLoc var
     case tp of
-        Array _pos _baseTp -> return (codeVar, Mem 8 regVar (Lit 0) 0)
+        Array _pos _baseTp -> do
+            (fixCode, retRegLoc) <- fixMemRegLoc (Mem 8 regVar (Lit 0) 0)
+            return (BLst [codeVar, fixCode], retRegLoc)
         Class _pos classIdent -> throwError "unimplemented"
         _ -> throwError $ "Attribute call on type " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
 
@@ -828,16 +881,21 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
     labelLoop <- newLabel
     labelCond <- newLabel
     labelExit <- newLabel
-    let codeCond = case regLocIt of
+    let (codeCond1, regLocArr2) = case regLocArr of
+            Reg _ -> (BLst [], regLocArr)
+            Lit _ -> (BLst [], regLocArr)
+            _ -> (moveRegsLocs regLocArr argRegLoc1, argRegLoc1)
+    let codeCond2 = case regLocIt of
             Reg _ -> BLst [
-                    BStr $ "\tcmp " ++ showRegLoc regLocIt ++ ", " ++ showRegLoc (Mem 8 regLocArr (Lit 0) 0) ++ "\n",
+                    BStr $ "\tcmp " ++ showRegLoc regLocIt ++ ", " ++ showRegLoc (Mem 8 regLocArr2 (Lit 0) 0) ++ "\n",
                     BStr $ "\tjl " ++ labelLoop ++ "\n"
                 ]
             _ -> BLst [
                     moveRegsLocs regLocIt (Reg rax),
-                    BStr $ "\tcmp " ++ showRegLoc (Reg rax) ++ ", " ++ showRegLoc (Mem 8 regLocArr (Lit 0) 0) ++ "\n",
+                    BStr $ "\tcmp " ++ showRegLoc (Reg rax) ++ ", " ++ showRegLoc (Mem 8 regLocArr2 (Lit 0) 0) ++ "\n",
                     BStr $ "\tjl " ++ labelLoop ++ "\n"
                 ]
+    let codeCond = BLst [codeCond1, codeCond2]
     let codeIterate = BLst [
                 BStr $ "\tincq " ++ showRegLoc regLocIt ++ "\n"
             ]
@@ -992,7 +1050,9 @@ compileProgram' (Program pos topDefs) = do
         builtInData,
         strCode,
         BStr $ ".text\n"
-            ++ ".globl main\n",
+            ++ ".globl main\n"
+            ++ "main:\n"
+            ++ "\tjmp fun_main\n",
         buildInCode,
         code
         ])

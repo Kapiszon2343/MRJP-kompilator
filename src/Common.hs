@@ -38,6 +38,12 @@ showRegLoc (Mem n ref (Lit 0) _) = show n ++ "(" ++ showRegLoc ref ++ ")"
 showRegLoc (Mem 0 ref counter m) = "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 showRegLoc (Mem n ref counter m) = show n ++ "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 
+isRegLocLocal (Reg _) = True
+isRegLocLocal (Lit _) = True
+isRegLocLocal _ = False
+
+isRegLocReg (Reg _) = True
+isRegLocReg _ = False
 
 rsp :: Reg
 rsp = 0
@@ -154,7 +160,7 @@ functionLabel (AttrVar _ var ident) = "class_" ++ showVar var ++ "_" ++ showIden
 builtInFunctions :: [BuiltInFunction]
 builtInFunctions = [
     (Ident "printInt", Fun Nothing (Void Nothing) [Int Nothing], BStr 
-        $ "printInt:\n"
+        $ "fun_printInt:\n"
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
@@ -167,7 +173,7 @@ builtInFunctions = [
         ++ "\tret\n",
         BStr ".printInt: .ascii \"%d\\n\\0\"\n"),
     (Ident "printString", Fun Nothing (Void Nothing) [Str Nothing], BStr
-        $ "printString:\n"
+        $ "fun_printString:\n"
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
@@ -180,7 +186,7 @@ builtInFunctions = [
         ++ "\tret\n",
         BStr ".printString: .ascii \"%s\\n\\0\"\n"),
     (Ident "error", Fun Nothing (Void Nothing) [], BStr
-        $ "error:\n"
+        $ "fun_error:\n"
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
@@ -191,7 +197,7 @@ builtInFunctions = [
         ++ "\tsyscall\n",
         BStr ".error: .ascii \"runtime error\\n\\0\"\n"),
     (Ident "readInt", Fun Nothing (Int Nothing) [], BStr 
-        $ "readInt:\n"
+        $ "fun_readInt:\n"
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
@@ -205,7 +211,7 @@ builtInFunctions = [
         ++ "\tret\n", 
         BStr ".readInt: .ascii \"%d\\0\"\n"),
     (Ident "readString", Fun Nothing (Str Nothing) [], BStr 
-        $ "readString:\n"
+        $ "fun_readString:\n"
         ++ "\tpush %rbp\n"
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
