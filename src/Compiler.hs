@@ -1024,7 +1024,11 @@ moveRegArgs n regLocs [] = return (regLocs, [], [])
 addArgs :: Int -> Stmt -> [Arg] -> CompilerMonad (StringBuilder, StringBuilder, Env -> Env)
 addArgs maxAppArgs stmt args =
     if maxAppArgs == 0
-        then addArgs' stmt (argRegLocs (length args)) args []
+        then -- addArgs' stmt (argRegLocs (length args)) args []
+        do 
+            let regLocs = argRegLocs (length args)
+            (shortenedArgRegLocs, shortenedArgs, moveArgs) <- moveRegArgs maxAppArgs regLocs args
+            addArgs' stmt shortenedArgRegLocs shortenedArgs moveArgs
         else do 
             let regLocs = argRegLocs (length args)
             (shortenedArgRegLocs, shortenedArgs, moveArgs) <- moveRegArgs maxAppArgs regLocs args
