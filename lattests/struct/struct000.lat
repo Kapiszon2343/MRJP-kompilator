@@ -1,0 +1,11 @@
+class C {
+    int a;
+    int b;
+}
+
+int main() {
+    C c = new C;
+    printInt(c.a);
+    printInt(c.b);
+    return 0;
+}

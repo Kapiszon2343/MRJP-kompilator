@@ -1,0 +1,13 @@
+class Point {
+    int x;
+    int y;
+}
+
+int main() {
+    Point p = new Point;
+    p.x = 69;
+    p.y = 42;
+    printInt(p.y);
+    printInt(p.x);
+    return 0;
+}
