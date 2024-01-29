@@ -23,7 +23,7 @@ import Common
       Loc,
       Env,
       ClassForm,
-      EnvLoc )
+      EnvLoc, formClass', formClass )
 import qualified Latte.Abs as Data.Map
 import Data.Bool (bool)
 import Data.Array (Array)
@@ -502,29 +502,13 @@ runTopDefs ((ClassExt pos classIdent _parentIdent elems):tail) = do
     checkClass env classIdent elems 
     runTopDefs tail
 
-formClass' :: ClassForm -> [ClassElem] -> TypeCheckerMonad ClassForm
-formClass' form [] = return form
-formClass' form (elem:elems) = do
-    (attrMap, size) <- formClass elems
-    case elem of
-        Attribute pos tp ident -> case Data.Map.lookup ident attrMap of
-            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
-            Nothing -> formClass' (Data.Bifunctor.bimap (Data.Map.insert ident (tp, 8)) (+8) form) elems
-        Method pos retTp ident args block -> case Data.Map.lookup ident attrMap of
-            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
-            Nothing -> formClass' (Data.Bifunctor.bimap
-                (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, 8))
-                (+8)
-                form) elems
-
-formClass :: [ClassElem] -> TypeCheckerMonad ClassForm
-formClass = formClass' (Data.Map.empty, 0)
-
 extendClass :: BNFC'Position -> Ident -> [ClassElem] -> TypeCheckerMonad ClassForm
 extendClass pos parentIdent elems = do
     (_, classEnv) <- ask
     case Data.Map.lookup parentIdent classEnv of
-        Just (form,_) -> formClass' form elems
+        Just (form,_) -> case runExcept $ formClass' form elems of
+            Right formedClass -> return formedClass
+            Left err -> throwError err
         Nothing -> throwError $ "Parent class " ++ showIdent parentIdent ++ " not found at: " ++ showPos pos
 
 addTopDefs :: [TopDef] -> [TopDef] -> TypeCheckerMonad (IO ())
@@ -557,7 +541,9 @@ addTopDefs ((ClassDef pos ident elems):lst) topDefs2 = do
         Nothing -> do
             loc <- newloc
             modifyMem (Data.Map.insert loc (Class pos ident))
-            classForm <- formClass elems
+            classForm <- case runExcept $ formClass elems of
+                Right formedClass -> return formedClass
+                Left err -> throwError err
             local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident (classForm, Ident ""))) (addTopDefs lst topDefs2)
 addTopDefs ((ClassExt pos classIdent parentIdent elems):lst) topDefs2 = do
     (envLoc, envClass) <- ask

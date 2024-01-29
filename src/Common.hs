@@ -11,9 +11,16 @@ import Text.Read (readMaybe)
 import Data.Array (Array)
 import Data.Maybe
 import Distribution.System (OS(Windows, Linux), buildOS)
+import qualified Data.Set
+import Data.Bifunctor (first, Bifunctor (second, bimap))
 
-type TypeSize = Int
-type ClassForm = (Data.Map.Map Ident (Type, TypeSize), TypeSize)
+type StructDepth = Int
+type MethodDepth = Int
+data AttrLoc = Inline
+    | AttrLocVar StructDepth
+    | AttrLocMet MethodDepth
+type ClassSize = (StructDepth, MethodDepth)
+type ClassForm = (Data.Map.Map Ident (Type, AttrLoc), ClassSize)
 type EnvLoc = Data.Map.Map Ident Loc
 type EnvClass = Data.Map.Map Ident (ClassForm, Ident)
 
@@ -93,6 +100,7 @@ argRegCount = length argRegs
 argRegLoc0 = Reg $ head argRegs
 argRegLoc1 = Reg $ argRegs!!1
 argRegLoc2 = Reg $ argRegs!!2
+argRegLoc3 = Reg $ argRegs!!3
 
 moveRegsLocs :: RegLoc -> RegLoc -> StringBuilder
 moveRegsLocs (Lit 0) (Reg r) = BStr $ "\txorq " ++ showReg r ++ ", " ++ showReg r ++ "\n"
@@ -228,6 +236,41 @@ builtInFunctions = [
         ++ "\tret\n", 
         BStr ".readString: .ascii \"%s\\0\"\n")
     ]
+
+formClass'' :: ClassForm -> [ClassElem] -> Except String ClassForm
+formClass'' form [] = return form
+formClass'' form (elem:elems) = do
+    let (attrMap, (structSize, methodSize)) = form
+    case elem of
+        Attribute pos tp ident -> case Data.Map.lookup ident attrMap of
+            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+            Nothing -> formClass'' (bimap (Data.Map.insert ident (tp, AttrLocVar structSize)) (first (+8)) form) elems
+        Method pos retTp ident args block -> case Data.Map.lookup ident attrMap of
+            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+            Nothing -> formClass'' (bimap
+                (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, AttrLocMet methodSize))
+                (second (+8))
+                form) elems
+
+checkClassElems' :: Data.Set.Set Ident -> [ClassElem] -> Except String ()
+checkClassElems' elemSet [] = return ()
+checkClassElems' elemSet (elem:elems) = do
+    let (pos, ident) = case elem of 
+            Attribute pos tp ident -> (pos, ident)
+            Method pos retTp ident args block -> (pos, ident)
+    if Data.Set.member ident elemSet
+        then throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+        else checkClassElems' (Data.Set.insert ident elemSet) elems
+
+checkClassElems = checkClassElems' Data.Set.empty
+
+formClass' :: ClassForm -> [ClassElem] -> Except String ClassForm
+formClass' form elems = do
+    checkClassElems elems
+    formClass'' form elems
+
+formClass :: [ClassElem] -> Except String ClassForm
+formClass = formClass' (Data.Map.empty, (16, 0))
 
 data Val = ValBool Bool
     | ValInt Integer

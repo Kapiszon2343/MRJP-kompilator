@@ -5,7 +5,7 @@ module Compiler where
 
 import Data.Map
 import Data.Maybe (fromMaybe)
-import Data.Bifunctor ( first )
+import Data.Bifunctor ( first, Bifunctor (bimap) )
 import Control.Monad.State
 import Control.Monad.Reader ( ReaderT (runReaderT), MonadReader(local, ask), asks )
 import Control.Monad.Except
@@ -16,6 +16,7 @@ import qualified Text.ParserCombinators.ReadP as Data.Map
 import GHC.IO.Handle.Internals (readTextDevice)
 import InfoDigger (digStmtInfoPub)
 import Control.Exception.Base (throw)
+import Distribution.Compat.CharParsing (between)
 
 instance Ord RegLoc where
     compare (Reg r0) (Reg r1) = compare r0 r1
@@ -190,6 +191,17 @@ removeFirstTmp [] = []
 removeFirstTmp (TMPUse:refs) = refs
 removeFirstTmp (ref:refs) = ref:removeFirstTmp refs
 
+reserveRegLoc :: RegLoc -> Loc -> Type -> [LocUse] -> CompilerMonad ()
+reserveRegLoc regLoc loc tp [IdentUse ident] = do
+    ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
+    put (
+        (Data.Map.insert loc tp lt, l), 
+        Data.Map.insert loc regLoc vrc,
+        Data.Map.insert regLoc [IdentUse ident] rlu, 
+        nextLabel, 
+        stackState, 
+        strCodes) -- TODO check if [ident] is correct
+
 releaseTmpRegLoc :: RegLoc -> CompilerMonad ()
 releaseTmpRegLoc regLoc = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
@@ -310,7 +322,17 @@ getVarRegLoc (AttrVar pos var attrIdent) = do
     case tp of
         Array _pos _baseTp -> do
             return (BLst [codeVar], Mem 8 regVar (Lit 0) 0)
-        Class _pos classIdent -> throwError "unimplemented"
+        Class _pos classIdent -> do
+            (envVar, envClass) <- ask
+            (attrMap, classSize) <- case Data.Map.lookup classIdent envClass of
+                    Just (classForm, parentIdent) -> return classForm
+                    Nothing -> throwError $ "Attribute call on unregistered class " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
+            (tp, attrLoc) <- case Data.Map.lookup attrIdent attrMap of
+                    Just (tp, attrDepth) -> return (tp, attrDepth)
+                    Nothing -> throwError $ "Attribute " ++ showIdent attrIdent ++ " doesn't exist in class " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
+            case attrLoc of
+                AttrLocVar attrDepth -> return (BLst [codeVar], Mem attrDepth regVar (Lit 0) 0)
+                AttrLocMet _ -> throwError "unimplemented"
         _ -> throwError $ "Attribute call on type " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
 
 maybeMoveReg' :: [Reg] -> RegLoc -> CompilerMonad (StringBuilder, RegLoc)
@@ -433,11 +455,41 @@ compileIf expr lt lf = do
         BStr $ "\tjmp " ++ lt ++ "\n"
         ]
 
+compileExprs' :: [Expr] -> [RegLoc] -> StringBuilder -> CompilerMonad StringBuilder
+compileExprs' [] _ _ = return $ BLst []
+compileExprs' [expr] [regLoc] _ = compileExpr' expr regLoc
+compileExprs' (expr:exprs) (regLoc:regLocs) betweenCode = do
+    codeHead <- compileExpr' expr regLoc
+    codeTail <- compileExprs' exprs regLocs betweenCode
+    return $ BLst [codeHead, betweenCode, codeTail]
+
 compileExpr' :: Expr -> RegLoc -> CompilerMonad StringBuilder
 compileExpr' (ENew pos newVar) r = do
     case newVar of
         NewBase newPos tp -> case tp of
-            Class tpPos classIdent -> throwError "unimplemented"
+            Class tpPos classIdent -> do
+                (envVar, envClass) <- ask
+                (classForm, parentName) <- case Data.Map.lookup classIdent envClass of
+                    Nothing -> throwError $ "Could not find class named " ++ showIdent classIdent ++ " at: " ++ showPos tpPos
+                    Just (classForm, classSize) -> return (classForm, classSize)
+                let (attrs, (classSize, methodSize)) = classForm
+                let reg = case r of
+                        Reg _ -> r
+                        _ -> argRegLoc2
+                loopLabel <- newLabel
+                return $ BLst [
+                        moveRegsLocs (Lit classSize) argRegLoc0,
+                        BStr   "\tcall malloc\n",
+                        moveRegsLocs (Reg rax) reg,
+                        -- moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0), TODO set parent method frame
+                        moveRegsLocs (Lit $ div (classSize - 16) 8) argRegLoc1,
+                        BStr $ loopLabel ++ ":\n",
+                        BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
+                        moveRegsLocs (Lit 0) (Mem 16 reg argRegLoc1 8),
+                        BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
+                        BStr $ "\tjnz " ++ loopLabel ++ "\n",
+                        moveRegsLocs reg r
+                    ]
             Str tpPos -> return $ BLst [
                     moveRegsLocs (Lit 1) argRegLoc0,
                     BStr   "\tcall malloc\n",
@@ -447,20 +499,13 @@ compileExpr' (ENew pos newVar) r = do
             _ -> compileExpr' (ELitInt pos 0) r
         NewArray newPos internalNew expr -> do
             regLocLen <- getFreeRegLoc
-            regLocStoreMem1 <- getNextStack
-            regLocStoreMem2 <- getNextStack
             let reg = case r of
                     Reg _ -> r
                     _ -> argRegLoc2
             exprCode <- compileExpr' expr argRegLoc0
             loopLabel <- newLabel
-            internalNewCode <- compileExpr' (ENew pos internalNew) (Mem 16 reg argRegLoc1 8)
             releaseTmpRegLoc regLocLen
-            releaseTmpRegLoc regLocStoreMem1
-            releaseTmpRegLoc regLocStoreMem2
             return $ BLst [
-                    moveRegsLocs argRegLoc1 regLocStoreMem1,
-                    moveRegsLocs argRegLoc2 regLocStoreMem2,
                     exprCode,
                     moveRegsLocs argRegLoc0 regLocLen,
                     BStr $ "\tadd $2, " ++ showRegLoc argRegLoc0 ++ "\n",
@@ -471,13 +516,10 @@ compileExpr' (ENew pos newVar) r = do
                     moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
                     BStr $ loopLabel ++ ":\n",
                     BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
-                    internalNewCode,
+                    moveRegsLocs (Lit 0) (Mem 16 reg argRegLoc1 8),
                     BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
                     BStr $ "\tjnz " ++ loopLabel ++ "\n",
-                    moveRegsLocs reg (Reg rax),
-                    moveRegsLocs regLocStoreMem1 argRegLoc1,
-                    moveRegsLocs regLocStoreMem2 argRegLoc2,
-                    moveRegsLocs (Reg rax) r
+                    moveRegsLocs reg r
                 ]
 compileExpr' (EString pos str) r = do
     (lt, vrc, rlu, nextLabel, stackState, (strCodes, strCodeNr)) <- get
@@ -801,14 +843,7 @@ compileStmt (Decl _pos tp (decl:decls)) = do
             Init pos ident expr -> (ident, expr)
     loc <- newLoc
     regLoc <- getNextStack
-    ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
-    put (
-        (Data.Map.insert loc tp lt, l), 
-        Data.Map.insert loc regLoc vrc,
-        Data.Map.insert regLoc [IdentUse ident] rlu, 
-        nextLabel, 
-        stackState, 
-        strCodes) -- TODO check if [ident] is correct
+    reserveRegLoc regLoc loc tp [IdentUse ident]
     codeHead <- compileExpr' expr regLoc
     let envMod1 = first (Data.Map.insert ident loc)
     (codeTail, envMod2) <- local envMod1 (compileStmt (Decl _pos tp decls))
@@ -983,30 +1018,14 @@ addArgs' stmt _ [] [] = do
     return (BLst [], codeStmt, envMod)
 addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
     loc <- newLoc
-    regLocOut <- getFreeRegLoc
-    ((lt,l), vrc, rlu, nextLabel, (currStack, maxStack), strCodes) <- get
-    (envVar, envClass) <- ask
+    regLocOut <- getNextStack
+    reserveRegLoc regLocOut loc tp [IdentUse ident]
     let codeMov = moveRegsLocs regLocIn regLocOut
-    put (
-        (Data.Map.insert loc tp lt, l), 
-        Data.Map.insert loc regLocOut vrc, 
-        Data.Map.insert regLocOut [IdentUse ident] rlu, 
-        nextLabel, 
-        (currStack, maxStack), 
-        strCodes)
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs [] moveArgs)
     return (BLst [codeMoves, codeMov], codeStmt, envModRet)
 addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
     loc <- newLoc
-    ((lt,l), vrc, rlu, nextLabel, (currStack, maxStack), strCodes) <- get
-    (envVar, envClass) <- ask
-    put (
-            (Data.Map.insert loc tp lt, l), 
-            Data.Map.insert loc regLoc vrc, 
-            Data.Map.insert regLoc [IdentUse ident] rlu, 
-            nextLabel, 
-            (currStack, maxStack), 
-            strCodes)
+    reserveRegLoc regLoc loc tp [IdentUse ident]
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs args moveArgs)
     return (codeMoves, codeStmt, envModRet)
 addArgs' stmt regLocs args moveArgs = throwError $ "addArgs' stmt regLocs:" ++ show regLocs ++ "args: " ++ show args ++ "moveArgs" ++ show moveArgs
@@ -1040,8 +1059,8 @@ stableRegsToStack' (reg:regs) = do
     (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
     case Data.Map.lookup (Reg reg) rlu of
         Just _ -> do
-            let regLoc = RBP currStackSize
-            put (lt, vrc, rlu, nextLabel,  (currStackSize+8, max maxStackSize (currStackSize+8)), strCodes)
+            let regLoc = RBP (maxStackSize+8)
+            put (lt, vrc, rlu, nextLabel,  (currStackSize, max maxStackSize (maxStackSize+8)), strCodes)
             (codePushTail, codePopTail) <- stableRegsToStack' regs
             let codePushThis = moveRegsLocs (Reg reg) regLoc
             let codePopThis = moveRegsLocs regLoc (Reg reg)
@@ -1052,7 +1071,13 @@ stableRegsToStack' (reg:regs) = do
 stableRegsToStack :: CompilerMonad (StringBuilder, StringBuilder)
 stableRegsToStack = stableRegsToStack' stableRegs
 
+compileClassElems :: [ClassElem] -> CompilerMonad StringBuilder
+compileClassElems [] = return $ BLst []
+compileClassElems ((Attribute pos tp ident):classElems) = compileClassElems classElems
+compileClassElems ((Method pos tp ident args block):classElems) = throwError "unimplemented"
+
 compileTopDefs :: StringBuilder -> [TopDef] -> CompilerMonad StringBuilder
+compileTopDefs code [] = do return code
 compileTopDefs code ((FnDef pos tp ident args block):lst) = do
     (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
     put (lt0, Data.Map.empty, Data.Map.empty, nextLabel0, (8, 8), strCodes0)
@@ -1075,9 +1100,10 @@ compileTopDefs code ((FnDef pos tp ident args block):lst) = do
                 ++ "\tpop %rbp\n"
                 ++ "\tret\n")) (BLst [currCode, BFil filRetN])
         ]) lst
-compileTopDefs code ((ClassDef pos ident elems):lst) = throwError "unimplemented"
+compileTopDefs code ((ClassDef pos ident elems):lst) = do
+    codeClass <- compileClassElems elems
+    compileTopDefs (BLst [codeClass, code]) lst
 compileTopDefs code ((ClassExt pos classIdent parentIdent elems):lst) = throwError "unimplemented"
-compileTopDefs code [] = do return code
 
 compileBuiltInFunctions :: [BuiltInFunction] -> CompilerMonad (StringBuilder, StringBuilder)
 compileBuiltInFunctions [] = return (BLst [], BLst [])
@@ -1114,7 +1140,17 @@ compileProgram' (Program pos topDefs) = do
 argsToTypes :: [Arg] -> [Type]
 argsToTypes = Prelude.map argToType
 
+extendClass :: BNFC'Position -> Ident -> [ClassElem] -> CompilerMonad ClassForm
+extendClass pos parentIdent elems = do
+    (_, classEnv) <- ask
+    case Data.Map.lookup parentIdent classEnv of
+        Just (form,_) -> case runExcept $ formClass' form elems of
+            Right formedClass -> return formedClass
+            Left err -> throwError err
+        Nothing -> throwError $ "Parent class " ++ showIdent parentIdent ++ " not found at: " ++ showPos pos
+
 addEverything :: [BuiltInFunction] -> [TopDef] -> Program -> CompilerMonad String
+addEverything [] [] program = compileProgram' program
 addEverything [] (topDef:topDefs) program = do
     case topDef of
         FnDef pos retTp ident args block -> do
@@ -1122,12 +1158,21 @@ addEverything [] (topDef:topDefs) program = do
             let tp = Fun pos retTp (argsToTypes args)
             insertLocTp loc tp
             local (first $ Data.Map.insert ident loc) (addEverything [] topDefs program)
-        _ -> throwError "unimplemented"
+        ClassDef pos ident elems -> do
+            loc <- newLoc
+            let tp = Class pos ident
+            classForm <- case runExcept $ formClass elems of
+                Right formedClass -> return formedClass
+                Left err -> throwError err
+            local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident (classForm, Ident "Object"))) (addEverything [] topDefs program)
+        ClassExt pos classIdent parentIdent elems -> do
+            loc <- newLoc
+            classForm <- extendClass pos parentIdent elems
+            local (Data.Bifunctor.bimap (Data.Map.insert classIdent loc) (Data.Map.insert classIdent (classForm, parentIdent))) (addEverything [] topDefs program)
 addEverything ((ident,tp,_,_):bIFs) topDefs program = do
     loc <- newLoc
     insertLocTp loc tp
     local (first $ Data.Map.insert ident loc) (addEverything bIFs topDefs program)
-addEverything [] [] program = compileProgram' program
 
 compileProgram :: Program -> CompilerMonad String
 compileProgram (Program pos topDefs) = addEverything builtInFunctions topDefs (Program pos topDefs)
