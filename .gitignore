@@ -3,6 +3,7 @@ latc_ARCH
 .vscode
 latc_x86_64
 latc_x86_64.exe
-lattests/*/*
-!lattests/*/*.lat
-!lattests/*/*.output
+lattests/*/*/*
+!lattests/*/*/*.lat
+!lattests/*/*/*.output
+!lattests/*/*/*.input
