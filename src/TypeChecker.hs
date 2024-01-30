@@ -137,7 +137,7 @@ getVarType (AttrVar pos var ident) = do
             (_, envClass) <- ask
             let classForm = Data.Map.lookup classIdent envClass
             case classForm of
-                Just ((attrMap, _),_) -> do
+                Just ((attrMap, _, _),_) -> do
                     let attr = Data.Map.lookup ident attrMap
                     case attr of
                         Just (tp, _) -> return tp
@@ -502,11 +502,11 @@ runTopDefs ((ClassExt pos classIdent _parentIdent elems):tail) = do
     checkClass env classIdent elems 
     runTopDefs tail
 
-extendClass :: BNFC'Position -> Ident -> [ClassElem] -> TypeCheckerMonad ClassForm
-extendClass pos parentIdent elems = do
+extendClass :: BNFC'Position -> Ident -> Ident -> [ClassElem] -> TypeCheckerMonad ClassForm
+extendClass pos classIdent parentIdent elems = do
     (_, classEnv) <- ask
     case Data.Map.lookup parentIdent classEnv of
-        Just (form,_) -> case runExcept $ formClass' form elems of
+        Just (form,_) -> case runExcept $ formClass' classIdent form elems of
             Right formedClass -> return formedClass
             Left err -> throwError err
         Nothing -> throwError $ "Parent class " ++ showIdent parentIdent ++ " not found at: " ++ showPos pos
@@ -541,7 +541,7 @@ addTopDefs ((ClassDef pos ident elems):lst) topDefs2 = do
         Nothing -> do
             loc <- newloc
             modifyMem (Data.Map.insert loc (Class pos ident))
-            classForm <- case runExcept $ formClass elems of
+            classForm <- case runExcept $ formClass ident elems of
                 Right formedClass -> return formedClass
                 Left err -> throwError err
             local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident (classForm, Ident ""))) (addTopDefs lst topDefs2)
@@ -552,7 +552,7 @@ addTopDefs ((ClassExt pos classIdent parentIdent elems):lst) topDefs2 = do
         Nothing -> do
             loc <- newloc
             modifyMem (Data.Map.insert loc (Class pos classIdent))
-            classForm <- extendClass pos parentIdent elems
+            classForm <- extendClass pos classIdent parentIdent elems
             local (Data.Bifunctor.bimap (Data.Map.insert classIdent loc) (Data.Map.insert classIdent (classForm, parentIdent))) (addTopDefs lst topDefs2)
 
 addBuildIntFunctions :: [BuiltInFunction] -> Program -> TypeCheckerMonad (IO ())

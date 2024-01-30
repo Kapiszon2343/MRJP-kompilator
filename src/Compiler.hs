@@ -101,7 +101,7 @@ getVarType (AttrVar pos var ident) = do
             (_, envClass) <- ask
             let classForm = Data.Map.lookup classIdent envClass
             case classForm of
-                Just ((attrMap, _),_) -> do
+                Just ((attrMap, _, _),_) -> do
                     let attr = Data.Map.lookup ident attrMap
                     case attr of
                         Just (tp, _) -> return tp
@@ -342,7 +342,7 @@ getVarRegLoc (AttrVar pos var attrIdent) = do
             return (BLst [codeVar], Mem 8 regVar (Lit 0) 0)
         Class _pos classIdent -> do
             (envVar, envClass) <- ask
-            (attrMap, classSize) <- case Data.Map.lookup classIdent envClass of
+            (attrMap, _, classSize) <- case Data.Map.lookup classIdent envClass of
                     Just (classForm, parentIdent) -> return classForm
                     Nothing -> throwError $ "Attribute call on unregistered class " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
             (tp, attrLoc) <- case Data.Map.lookup attrIdent attrMap of
@@ -490,7 +490,7 @@ compileExpr' (ENew pos newVar) r = do
                 (classForm, parentName) <- case Data.Map.lookup classIdent envClass of
                     Nothing -> throwError $ "Could not find class named " ++ showIdent classIdent ++ " at: " ++ showPos tpPos
                     Just (classForm, classSize) -> return (classForm, classSize)
-                let (attrs, (classSize, methodSize)) = classForm
+                let (attrs, _, (classSize, methodSize)) = classForm
                 let reg = case r of
                         Reg _ -> r
                         _ -> argRegLoc2
@@ -801,7 +801,7 @@ compileExpr (EApp pos var exprs) =
             classIdent <- case classTp of
                 Class _ classIdent -> return classIdent
                 _ -> throwError $ "unregistered class at: " ++ showPos pos
-            (attrMap, classSize) <- case Data.Map.lookup classIdent envClass of
+            (attrMap, _, classSize) <- case Data.Map.lookup classIdent envClass of
                 Nothing -> throwError $ "unregistered class at: " ++ showPos pos
                 Just (classForm, parentIdent) -> return classForm
             attrLoc <- case Data.Map.lookup funIdent attrMap of
@@ -1141,8 +1141,8 @@ stableRegsToStack = stableRegsToStack' stableRegs
 stableClassRegsToStack :: CompilerMonad (StringBuilder, StringBuilder)
 stableClassRegsToStack = stableRegsToStack' $ tail stableRegs
 
-compileClassElems' :: Ident -> [ClassElem] -> CompilerMonad (StringBuilder, StringBuilder)
-compileClassElems' _ [] = return (BLst [], BLst [])
+compileClassElems' :: Ident -> [ClassElem] -> CompilerMonad (StringBuilder)
+compileClassElems' _ [] = return (BLst [])
 compileClassElems' selfIdent ((Attribute pos tp ident):classElems) = compileClassElems' selfIdent classElems
 compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
     (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
@@ -1152,9 +1152,9 @@ compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
     (lt, vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
     let stackMax = 16 * div (oldStackMax + 31) 16
     put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
-    (labelTableTail, codeTail) <- compileClassElems' selfIdent classElems
+    codeTail <- compileClassElems' selfIdent classElems
     labelF <- functionLabel' selfIdent ident
-    return (BLst [BStr $ " , " ++ labelF, labelTableTail],
+    return (
         BLst [
             BStr $ labelF ++ ":\n"
                 ++ "\tpush %rbp\n"
@@ -1170,7 +1170,7 @@ compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
             codeTail
         ])
 
-addClassElems :: Ident -> [ClassElem] -> [ClassElem] -> CompilerMonad (StringBuilder, StringBuilder)
+addClassElems :: Ident -> [ClassElem] -> [ClassElem] -> CompilerMonad StringBuilder
 addClassElems classIdent [] compileElems = do
     loc <- newLoc
     reserveRegLoc globalSelfRegLoc loc (Class Nothing classIdent) [IdentUse globalIdentSelf]
@@ -1179,7 +1179,7 @@ addClassElems classIdent (elem:elems) compileElems = do
     case elem of
         Attribute pos tp ident -> do
             loc <- newLoc
-            (attrMap, classSize) <- getClassForm classIdent
+            (attrMap, _, classSize) <- getClassForm classIdent
             attrDepth <- case Data.Map.lookup ident attrMap of
                 Nothing -> throwError $ "Attribute " ++ showIdent ident ++ " has not been added to class " ++ showIdent classIdent ++ " at: " ++ showPos pos
                 Just (_, attrDepth) -> case attrDepth of
@@ -1194,11 +1194,30 @@ addClassElems classIdent (elem:elems) compileElems = do
             insertLocTp loc tp
             local (first $ Data.Map.insert ident loc) (addClassElems classIdent elems compileElems)
 
+makeLabelTable' :: MethodDepth -> Data.Map.Map MethodDepth (Ident, Ident) -> CompilerMonad StringBuilder
+makeLabelTable' depth mp = case Data.Map.lookup depth mp of
+    Nothing -> return $ BLst []
+    Just (funcIdent, originClassIdent) -> do
+        tailTable <- makeLabelTable' (depth + methodDepthStep) mp
+        labelF <- functionLabel' originClassIdent funcIdent
+        return $ BLst [BStr $ ", " ++ labelF , tailTable]
+
+makeLabelTable :: Ident -> CompilerMonad StringBuilder
+makeLabelTable classIdent = do
+    (envVar, envClass) <- ask
+    case Data.Map.lookup classIdent envClass of
+        Just (form, parentIdent) -> do
+            let (_, methodDepthMap, _) = form
+            tableCode <- makeLabelTable' 8 methodDepthMap
+            return $ BLst [BStr $ classLabel classIdent ++ ": .quad " ++ classLabel classIdent, tableCode, BStr "\n"]
+        Nothing -> throwError $ "class " ++ showIdent classIdent ++ " not found"
+
 compileClassElems :: Ident -> [ClassElem] -> CompilerMonad StringBuilder
 compileClassElems classIdent elems = do
-    (labelTable, funcCodes) <- addClassElems classIdent elems elems
+    funcCodes <- addClassElems classIdent elems elems
+    labelTable <- makeLabelTable classIdent
     (lt, vrc, rlu, nextLabel, stackState, (dataCodes, strCount)) <- get 
-    let newDataCodes = BLst [dataCodes, BLst [ BStr $ classLabel classIdent ++ ": .quad " ++ classLabel classIdent, labelTable, BStr "\n" ]]
+    let newDataCodes = BLst [dataCodes, labelTable]
     put (lt, vrc, rlu, nextLabel, stackState, (newDataCodes, strCount))
     return $ BLst [
             funcCodes
@@ -1235,7 +1254,12 @@ compileTopDefs code ((ClassDef pos ident elems):lst) = do
     (lt, vrc, rlu, nextLabel, stackStateOld, strCodes) <- get
     put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
     compileTopDefs (BLst [codeClass, code]) lst
-compileTopDefs code ((ClassExt pos classIdent parentIdent elems):lst) = throwError "unimplemented"
+compileTopDefs code ((ClassExt pos classIdent parentIdent elems):lst) = do
+    (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
+    codeClass <- compileClassElems classIdent elems
+    (lt, vrc, rlu, nextLabel, stackStateOld, strCodes) <- get
+    put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
+    compileTopDefs (BLst [codeClass, code]) lst
 
 compileBuiltInFunctions :: [BuiltInFunction] -> CompilerMonad (StringBuilder, StringBuilder)
 compileBuiltInFunctions [] = return (BLst [], BLst [])
@@ -1272,11 +1296,11 @@ compileProgram' (Program pos topDefs) = do
 argsToTypes :: [Arg] -> [Type]
 argsToTypes = Prelude.map argToType
 
-extendClass :: BNFC'Position -> Ident -> [ClassElem] -> CompilerMonad ClassForm
-extendClass pos parentIdent elems = do
+extendClass :: BNFC'Position -> Ident -> Ident -> [ClassElem] -> CompilerMonad ClassForm
+extendClass pos classIdent parentIdent elems = do
     (_, classEnv) <- ask
     case Data.Map.lookup parentIdent classEnv of
-        Just (form,_) -> case runExcept $ formClass' form elems of
+        Just (form,_) -> case runExcept $ formClass' classIdent form elems of
             Right formedClass -> return formedClass
             Left err -> throwError err
         Nothing -> throwError $ "Parent class " ++ showIdent parentIdent ++ " not found at: " ++ showPos pos
@@ -1293,13 +1317,13 @@ addEverything [] (topDef:topDefs) program = do
         ClassDef pos ident elems -> do
             loc <- newLoc
             let tp = Class pos ident
-            classForm <- case runExcept $ formClass elems of
+            classForm <- case runExcept $ formClass ident elems of
                 Right formedClass -> return formedClass
                 Left err -> throwError err
             local (Data.Bifunctor.bimap (Data.Map.insert ident loc) (Data.Map.insert ident (classForm, Ident "Object"))) (addEverything [] topDefs program)
         ClassExt pos classIdent parentIdent elems -> do
             loc <- newLoc
-            classForm <- extendClass pos parentIdent elems
+            classForm <- extendClass pos classIdent parentIdent elems
             local (Data.Bifunctor.bimap (Data.Map.insert classIdent loc) (Data.Map.insert classIdent (classForm, parentIdent))) (addEverything [] topDefs program)
 addEverything ((ident,tp,_,_):bIFs) topDefs program = do
     loc <- newLoc

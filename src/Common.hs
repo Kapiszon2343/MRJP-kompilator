@@ -20,7 +20,7 @@ data AttrLoc = Inline
     | AttrLocVar StructDepth
     | AttrLocMet MethodDepth
 type ClassSize = (StructDepth, MethodDepth)
-type ClassForm = (Data.Map.Map Ident (Type, AttrLoc), ClassSize)
+type ClassForm = (Data.Map.Map Ident (Type, AttrLoc), Data.Map.Map MethodDepth (Ident, Ident), ClassSize)
 type EnvLoc = Data.Map.Map Ident Loc
 type EnvClass = Data.Map.Map Ident (ClassForm, Ident)
 
@@ -36,6 +36,8 @@ data RegLoc = Reg Reg
     | Lit Int
     | Mem Int RegLoc RegLoc Int
     deriving (Show, Eq)
+
+triMap fa fb fc (a,b,c) = (fa a, fb b, fc c)
 
 showRegLoc (Reg r) = showReg r
 showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
@@ -243,18 +245,19 @@ labelSize = 8
 methodDepthStep = labelSize
 
 
-formClass'' :: ClassForm -> [ClassElem] -> Except String ClassForm
-formClass'' form [] = return form
-formClass'' form (elem:elems) = do
-    let (attrMap, (structSize, methodSize)) = form
+formClass'' :: Ident -> ClassForm -> [ClassElem] -> Except String ClassForm
+formClass'' classIdent form [] = return form
+formClass'' classIdent form (elem:elems) = do
+    let (attrMap, methodDepthMap, (structSize, methodSize)) = form
     case elem of
         Attribute pos tp ident -> case Data.Map.lookup ident attrMap of
             Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
-            Nothing -> formClass'' (bimap (Data.Map.insert ident (tp, AttrLocVar structSize)) (first (+8)) form) elems
+            Nothing -> formClass'' classIdent (triMap (Data.Map.insert ident (tp, AttrLocVar structSize)) id (first (+8)) form) elems
         Method pos retTp ident args block -> case Data.Map.lookup ident attrMap of
             Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
-            Nothing -> formClass'' (bimap
+            Nothing -> formClass'' classIdent (triMap
                 (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, AttrLocMet methodSize))
+                (Data.Map.insert methodSize (ident, classIdent))
                 (second (+methodDepthStep))
                 form) elems
 
@@ -270,13 +273,13 @@ checkClassElems' elemSet (elem:elems) = do
 
 checkClassElems = checkClassElems' Data.Set.empty
 
-formClass' :: ClassForm -> [ClassElem] -> Except String ClassForm
-formClass' form elems = do
+formClass' :: Ident -> ClassForm -> [ClassElem] -> Except String ClassForm
+formClass' classIdent form elems = do
     checkClassElems elems
-    formClass'' form elems
+    formClass'' classIdent form elems
 
-formClass :: [ClassElem] -> Except String ClassForm
-formClass = formClass' (Data.Map.empty, (16, methodDepthStep))
+formClass :: Ident -> [ClassElem] -> Except String ClassForm
+formClass classIdent = formClass' classIdent (Data.Map.empty, Data.Map.empty, (16, methodDepthStep))
 
 data Val = ValBool Bool
     | ValInt Integer
