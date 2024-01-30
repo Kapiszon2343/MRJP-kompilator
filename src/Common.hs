@@ -88,6 +88,9 @@ showReg 6 = "%rdi"
 showReg 7 = "%rcx"
 showReg r = "%r" ++ show r
 
+globalSelfRegLoc :: RegLoc
+globalSelfRegLoc = Reg $ head stableRegs
+globalIdentSelf = Ident "self"
 stableRegs :: [Reg]
 stableRegs = [12..15]
 tmpRegs :: [Reg]
@@ -160,10 +163,8 @@ showVar (IdentVar _ ident) = showIdent ident
 showVar (ArrayVar _ var _) = showVar var ++ "[int]"
 showVar (AttrVar _ var ident) = showVar var ++ "." ++ showIdent ident
 
-functionLabel :: Var -> String
-functionLabel (IdentVar _ ident) = "fun_" ++ showIdent ident
-functionLabel (ArrayVar _ var _) = showVar var
-functionLabel (AttrVar _ var ident) = "class_" ++ showVar var ++ "_" ++ showIdent ident
+classLabel :: Ident -> String
+classLabel classIdent = "class_" ++ showIdent classIdent
 
 builtInFunctions :: [BuiltInFunction]
 builtInFunctions = [
@@ -237,6 +238,8 @@ builtInFunctions = [
         BStr ".readString: .ascii \"%s\\0\"\n")
     ]
 
+jmpSize = 5
+
 formClass'' :: ClassForm -> [ClassElem] -> Except String ClassForm
 formClass'' form [] = return form
 formClass'' form (elem:elems) = do
@@ -249,7 +252,7 @@ formClass'' form (elem:elems) = do
             Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
             Nothing -> formClass'' (bimap
                 (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, AttrLocMet methodSize))
-                (second (+8))
+                (second (+jmpSize))
                 form) elems
 
 checkClassElems' :: Data.Set.Set Ident -> [ClassElem] -> Except String ()
@@ -270,7 +273,7 @@ formClass' form elems = do
     formClass'' form elems
 
 formClass :: [ClassElem] -> Except String ClassForm
-formClass = formClass' (Data.Map.empty, (16, 0))
+formClass = formClass' (Data.Map.empty, (16, jmpSize))
 
 data Val = ValBool Bool
     | ValInt Integer

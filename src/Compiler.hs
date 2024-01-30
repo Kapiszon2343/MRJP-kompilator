@@ -109,11 +109,29 @@ getVarType (AttrVar pos var ident) = do
                 Nothing -> throwError $ "Something went horribly wrong!!\n Could not find class " ++ showIdent classIdent ++ "of variable " ++ showVar var ++ " at: " ++ showPos pos
         _ -> throwError $ "Wrong attribute at: " ++ showPos pos ++ "\nType " ++ showType baseTp ++ "does not have attributes"
 
+getClassForm :: Ident -> CompilerMonad ClassForm
+getClassForm classIdent = do
+    (_, envClass)<- ask
+    case Data.Map.lookup classIdent envClass of
+        Nothing -> throwError $ "unregistered class " ++ showIdent classIdent
+        Just (form, parentIdent) -> return form
+
 newLabel :: CompilerMonad String
 newLabel = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (lt, vrc, rlu, nextLabel+1, stackState, strCodes)
     return $ "label_" ++ show nextLabel
+
+functionLabel :: Var -> CompilerMonad String
+functionLabel (IdentVar _ ident) = return $ "fun_" ++ showIdent ident
+functionLabel (ArrayVar _ var _) = throwError "functional variable is not unimplemented"
+functionLabel (AttrVar pos var ident) = do
+    classType <- getVarType var
+    case classType of
+        Class _ classIdent -> functionLabel' classIdent ident
+        _ -> throwError $ showVar var ++ " is not a class at: " ++ showPos pos
+
+functionLabel' classIdent functionIdent = return $ "classFun_" ++ showIdent classIdent ++ "_" ++ showIdent functionIdent
 
 getNextStack' :: Int -> CompilerMonad RegLoc
 getNextStack' stackSize = do
@@ -256,7 +274,7 @@ getIdentRegLoc pos ident = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
     loc <- getIdentLoc pos ident
     case Data.Map.lookup loc vrc of
-        Nothing -> throwError ("undefined variable " ++ show ident ++ " at " ++ show pos)
+        Nothing -> throwError ("undefined variable " ++ showIdent ident ++ " at " ++ show pos)
         Just regLoc -> return regLoc
 
 fixMemRegLoc :: RegLoc -> CompilerMonad (StringBuilder, RegLoc, [RegLoc], StringBuilder)
@@ -481,7 +499,8 @@ compileExpr' (ENew pos newVar) r = do
                         moveRegsLocs (Lit classSize) argRegLoc0,
                         BStr   "\tcall malloc\n",
                         moveRegsLocs (Reg rax) reg,
-                        -- moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0), TODO set parent method frame
+                        BStr $ "\tleaq " ++ classLabel classIdent ++ "(%rip), " ++ showRegLoc argRegLoc1 ++ "\n", 
+                        moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
                         moveRegsLocs (Lit $ div (classSize - 16) 8) argRegLoc1,
                         BStr $ loopLabel ++ ":\n",
                         BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
@@ -751,23 +770,70 @@ compileExpr (ELitTrue pos) = compileExpr (ELitInt pos 1)
 compileExpr (ELitFalse pos) = compileExpr (ELitInt pos 0)
 compileExpr (ELitArr pos elems) = throwError "unimplemented"
 compileExpr (ELitNull pos classIdent) = compileExpr (ELitInt pos 0)
-compileExpr (EApp pos var exprs) = do
-    (fillCode, stackAdd') <- fillArgs (argRegLocs argRegCount) exprs
-    let (codeAlignStack, stackAdd) = if mod stackAdd' 16 > 0
-        then (BStr $ "\tsub " ++ showRegLoc (Lit (16 - mod stackAdd' 16)) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n", stackAdd' + 16 - mod stackAdd' 16)
-        else (BLst [], stackAdd')
-    let codeStackRestore = if stackAdd > 0
-        then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
-        else BLst []
-    return (
-            BLst [
-                codeAlignStack,
-                fillCode,
-                BStr $ "\tcall " ++ functionLabel var ++ "\n", -- TODO Maybe check for arrays
-                codeStackRestore
-            ],
-            Reg rax
-        )
+compileExpr (EApp pos var exprs) =
+    case var of
+        IdentVar posVar ident -> do
+            (fillCode, stackAdd') <- fillArgs (argRegLocs argRegCount) exprs
+            let (codeAlignStack, stackAdd) = if mod stackAdd' 16 > 0
+                then (BStr $ "\tsub " ++ showRegLoc (Lit (16 - mod stackAdd' 16)) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n", stackAdd' + 16 - mod stackAdd' 16)
+                else (BLst [], stackAdd')
+            let codeStackRestore = if stackAdd > 0
+                then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
+                else BLst []
+            labelF <- functionLabel var
+            return (
+                    BLst [
+                        codeAlignStack,
+                        fillCode,
+                        BStr $ "\tcall " ++ labelF ++ "\n", -- TODO Maybe check for arrays
+                        codeStackRestore
+                    ],
+                    Reg rax
+                )
+        AttrVar attrPos classVar funIdent -> do
+            (getCode, regLoc2) <- getVarRegLoc classVar
+            (fixCode, classRegLoc) <- extractMemRegLoc regLoc2
+            r12Mem <- if classRegLoc == globalSelfRegLoc
+                then return globalSelfRegLoc
+                else getNextStack
+            classTp <- getVarType classVar
+            (envVar, envClass) <- ask
+            classIdent <- case classTp of
+                Class _ classIdent -> return classIdent
+                _ -> throwError $ "unregistered class at: " ++ showPos pos
+            (attrMap, classSize) <- case Data.Map.lookup classIdent envClass of
+                Nothing -> throwError $ "unregistered class at: " ++ showPos pos
+                Just (classForm, parentIdent) -> return classForm
+            attrLoc <- case Data.Map.lookup funIdent attrMap of
+                Nothing -> throwError $ "No attribute " ++ showIdent funIdent ++ " in class " ++ showIdent classIdent ++ " at: "++ showPos pos
+                Just (tp, attrLoc) -> return attrLoc
+            methodDepth <- case attrLoc of
+                AttrLocMet methodDepth -> return methodDepth
+                _ -> throwError   "functional variable is no implemented in compiler"
+            (fillCode, stackAdd') <- fillArgs (argRegLocs argRegCount) exprs
+            let (codeAlignStack, stackAdd) = if mod stackAdd' 16 > 0
+                then (BStr $ "\tsub " ++ showRegLoc (Lit (16 - mod stackAdd' 16)) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n", stackAdd' + 16 - mod stackAdd' 16)
+                else (BLst [], stackAdd')
+            let codeStackRestore = if stackAdd > 0
+                then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
+                else BLst []
+            releaseTmpRegLocs [classRegLoc, r12Mem]
+            labelF <- functionLabel var
+            return (BLst [
+                    getCode,
+                    fixCode,
+                    codeAlignStack,
+                    fillCode,
+                    moveRegsLocs globalSelfRegLoc r12Mem,
+                    moveRegsLocs classRegLoc globalSelfRegLoc,
+                    moveRegsLocs (Mem 8 globalSelfRegLoc (Lit 0) 0) (Reg rax),
+                    -- BStr $ "\tadd " ++ showRegLoc (Lit methodDepth) ++ ", " ++ showRegLoc (Reg rax) ++ "\n",
+                    -- BStr $ "\tcall *" ++ showRegLoc (Reg rax)++ "\n",
+                    BStr $ "\tcall " ++ labelF ++ "\n",
+                    moveRegsLocs r12Mem globalSelfRegLoc,
+                    codeStackRestore
+                ], Reg rax)
+        _ -> throwError "calling function from array is unimplemented"
 -- compileExpr (EString pos str) = 
 compileExpr (ENeg pos expr) = do
     (code, regLoc) <- compileExpr expr
@@ -1071,24 +1137,87 @@ stableRegsToStack' (reg:regs) = do
 stableRegsToStack :: CompilerMonad (StringBuilder, StringBuilder)
 stableRegsToStack = stableRegsToStack' stableRegs
 
-compileClassElems :: [ClassElem] -> CompilerMonad StringBuilder
-compileClassElems [] = return $ BLst []
-compileClassElems ((Attribute pos tp ident):classElems) = compileClassElems classElems
-compileClassElems ((Method pos tp ident args block):classElems) = throwError "unimplemented"
+stableClassRegsToStack :: CompilerMonad (StringBuilder, StringBuilder)
+stableClassRegsToStack = stableRegsToStack' $ tail stableRegs
+
+compileClassElems' :: Ident -> [ClassElem] -> CompilerMonad (StringBuilder, StringBuilder)
+compileClassElems' _ [] = return (BLst [], BLst [])
+compileClassElems' selfIdent ((Attribute pos tp ident):classElems) = compileClassElems' selfIdent classElems
+compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
+    (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
+    let maxAppArgs = digStmtInfoPub (BStmt pos block)
+    (codeMov, currCode, _) <- addArgs maxAppArgs (BStmt pos block) args
+    (codePush, codePop) <- stableClassRegsToStack
+    (lt, vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
+    let stackMax = 16 * div (oldStackMax + 31) 16
+    put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
+    (jmpTableTail, codeTail) <- compileClassElems' selfIdent classElems
+    labelF <- functionLabel' selfIdent ident
+    return (BLst [BStr $ "\tjmp " ++ labelF ++ "\n",
+            jmpTableTail],
+        BLst [
+            BStr $ labelF ++ ":\n"
+                ++ "\tpush %rbp\n"
+                ++ "\tmovq %rsp, %rbp\n"
+                ++ "\tsub $" ++ show stackMax ++ ", %rsp\n",
+            codePush,
+            codeMov,
+            fillStringBuilder (Data.Map.singleton filRetN (
+                    buildString codePop
+                ++ "\tmovq %rbp, %rsp\n"
+                ++ "\tpop %rbp\n"
+                ++ "\tret\n")) (BLst [currCode, BFil filRetN]),
+            codeTail
+        ])
+
+addClassElems :: Ident -> [ClassElem] -> [ClassElem] -> CompilerMonad (StringBuilder, StringBuilder)
+addClassElems classIdent [] compileElems = do
+    loc <- newLoc
+    reserveRegLoc globalSelfRegLoc loc (Class Nothing classIdent) [IdentUse globalIdentSelf]
+    local (first $ Data.Map.insert globalIdentSelf loc) (compileClassElems' classIdent compileElems)
+addClassElems classIdent (elem:elems) compileElems = do
+    case elem of
+        Attribute pos tp ident -> do
+            loc <- newLoc
+            (attrMap, classSize) <- getClassForm classIdent
+            attrDepth <- case Data.Map.lookup ident attrMap of
+                Nothing -> throwError $ "Attribute " ++ showIdent ident ++ " has not been added to class " ++ showIdent classIdent ++ " at: " ++ showPos pos
+                Just (_, attrDepth) -> case attrDepth of
+                    AttrLocVar attrDepth -> return attrDepth
+                    _ -> throwError $ "Attribute " ++ showIdent ident ++ " has type mismatch in class " ++ showIdent classIdent ++ " at: " ++ showPos pos
+            let regLoc = Mem attrDepth globalSelfRegLoc (Lit 0) 0
+            reserveRegLoc regLoc loc tp [IdentUse ident]
+            local (first $ Data.Map.insert ident loc) (addClassElems classIdent elems compileElems)
+        Method pos retTp ident args block -> do
+            loc <- newLoc
+            let tp = Fun pos retTp (argsToTypes args)
+            insertLocTp loc tp
+            local (first $ Data.Map.insert ident loc) (addClassElems classIdent elems compileElems)
+
+compileClassElems :: Ident -> [ClassElem] -> CompilerMonad StringBuilder
+compileClassElems classIdent elems = do
+    (jmpTable, funcCodes) <- addClassElems classIdent elems elems
+    return $ BLst [
+            BStr $ "" ++ classLabel classIdent ++ ":\n",
+            BStr $ "\tjmp " ++ classLabel classIdent ++ "\n",
+            jmpTable,
+            funcCodes
+        ]
 
 compileTopDefs :: StringBuilder -> [TopDef] -> CompilerMonad StringBuilder
 compileTopDefs code [] = do return code
 compileTopDefs code ((FnDef pos tp ident args block):lst) = do
     (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
-    put (lt0, Data.Map.empty, Data.Map.empty, nextLabel0, (8, 8), strCodes0)
     let maxAppArgs = digStmtInfoPub (BStmt pos block)
     (codeMov, currCode, _) <- addArgs maxAppArgs (BStmt pos block) args
     (codePush, codePop) <- stableRegsToStack
     (lt, vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
     let stackMax = 16 * div (oldStackMax + 31) 16
+    put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
+    labelF <- functionLabel (IdentVar pos ident)
     compileTopDefs (BLst [
             code,
-            BStr $ functionLabel (IdentVar pos ident) ++ ":\n"
+            BStr $ labelF ++ ":\n"
                 ++ "\tpush %rbp\n"
                 ++ "\tmovq %rsp, %rbp\n"
                 ++ "\tsub $" ++ show stackMax ++ ", %rsp\n",
@@ -1101,7 +1230,10 @@ compileTopDefs code ((FnDef pos tp ident args block):lst) = do
                 ++ "\tret\n")) (BLst [currCode, BFil filRetN])
         ]) lst
 compileTopDefs code ((ClassDef pos ident elems):lst) = do
-    codeClass <- compileClassElems elems
+    (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
+    codeClass <- compileClassElems ident elems
+    (lt, vrc, rlu, nextLabel, stackStateOld, strCodes) <- get
+    put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
     compileTopDefs (BLst [codeClass, code]) lst
 compileTopDefs code ((ClassExt pos classIdent parentIdent elems):lst) = throwError "unimplemented"
 
