@@ -240,10 +240,21 @@ builtInFunctions = [
         BStr ".readString: .ascii \"%s\\0\"\n")
     ]
 
+perfectMatchType :: Type' a -> Type' a -> Bool
+perfectMatchType (Int _) (Int _) = True
+perfectMatchType (Str _) (Str _) = True
+perfectMatchType (Bool _) (Bool _) = True
+perfectMatchType (Void _) (Void _) = True
+perfectMatchType (Fun _ ret1 []) (Fun _ ret2 []) = perfectMatchType ret1 ret2
+perfectMatchType (Fun pos1 ret1 (arg1:args1)) (Fun pos2 ret2 (arg2:args2)) =
+    perfectMatchType arg1 arg2 && perfectMatchType (Fun pos1 ret1 args1) (Fun pos2 ret2 args2)
+perfectMatchType (Array _ tp1) (Array _ tp2) = perfectMatchType tp1 tp2
+perfectMatchType (Class pos1 (Ident str1)) (Class pos2 (Ident str2)) = str1 == str2
+perfectMatchType _ _ = False
+
 jmpSize = 5
 labelSize = 8
 methodDepthStep = labelSize
-
 
 formClass'' :: Ident -> ClassForm -> [ClassElem] -> Except String ClassForm
 formClass'' classIdent form [] = return form
@@ -251,10 +262,23 @@ formClass'' classIdent form (elem:elems) = do
     let (attrMap, methodDepthMap, (structSize, methodSize)) = form
     case elem of
         Attribute pos tp ident -> case Data.Map.lookup ident attrMap of
-            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+            Just _ -> formClass'' classIdent (triMap (Data.Map.insert ident (tp, AttrLocVar structSize)) id (first (+8)) form) elems
             Nothing -> formClass'' classIdent (triMap (Data.Map.insert ident (tp, AttrLocVar structSize)) id (first (+8)) form) elems
         Method pos retTp ident args block -> case Data.Map.lookup ident attrMap of
-            Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
+            Just (tp, attrLoc) -> case attrLoc of
+                AttrLocMet depth -> do
+                    let newTp = Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args
+                    if perfectMatchType tp newTp
+                        then formClass'' classIdent (triMap
+                            (Data.Map.insert ident (tp, AttrLocMet depth))
+                            (Data.Map.insert methodSize (ident, classIdent))
+                            id
+                            form) elems
+                        else throwError $ "Function type mismatch at function overwrite: " ++ showIdent ident ++ "\n"
+                            ++ "old type: " ++ showType tp ++ "\n"
+                            ++ "new type: " ++ showType newTp ++ "\n"
+                            ++ " at: " ++ showPos pos
+                _ -> throwError $ "Overwriting function with non function: " ++ showIdent ident ++ " at: " ++ showPos pos
             Nothing -> formClass'' classIdent (triMap
                 (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, AttrLocMet methodSize))
                 (Data.Map.insert methodSize (ident, classIdent))
