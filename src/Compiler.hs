@@ -827,9 +827,10 @@ compileExpr (EApp pos var exprs) =
                     moveRegsLocs globalSelfRegLoc r12Mem,
                     moveRegsLocs classRegLoc globalSelfRegLoc,
                     moveRegsLocs (Mem 8 globalSelfRegLoc (Lit 0) 0) (Reg rax),
-                    -- BStr $ "\tadd " ++ showRegLoc (Lit methodDepth) ++ ", " ++ showRegLoc (Reg rax) ++ "\n",
-                    -- BStr $ "\tcall *" ++ showRegLoc (Reg rax)++ "\n",
-                    BStr $ "\tcall " ++ labelF ++ "\n",
+                    moveRegsLocs (Mem methodDepth (Reg rax) (Lit 0) 0) (Reg rax),
+                    --BStr $ "\tadd " ++ showRegLoc (Lit methodDepth) ++ ", " ++ showRegLoc (Reg rax) ++ "\n",
+                    BStr $ "\tcall *" ++ showRegLoc (Reg rax)++ "\n",
+                    -- BStr $ "\tcall " ++ labelF ++ "\n",
                     moveRegsLocs r12Mem globalSelfRegLoc,
                     codeStackRestore
                 ], Reg rax)
@@ -1151,10 +1152,9 @@ compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
     (lt, vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
     let stackMax = 16 * div (oldStackMax + 31) 16
     put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
-    (jmpTableTail, codeTail) <- compileClassElems' selfIdent classElems
+    (labelTableTail, codeTail) <- compileClassElems' selfIdent classElems
     labelF <- functionLabel' selfIdent ident
-    return (BLst [BStr $ "\tjmp " ++ labelF ++ "\n",
-            jmpTableTail],
+    return (BLst [BStr $ " , " ++ labelF, labelTableTail],
         BLst [
             BStr $ labelF ++ ":\n"
                 ++ "\tpush %rbp\n"
@@ -1196,11 +1196,11 @@ addClassElems classIdent (elem:elems) compileElems = do
 
 compileClassElems :: Ident -> [ClassElem] -> CompilerMonad StringBuilder
 compileClassElems classIdent elems = do
-    (jmpTable, funcCodes) <- addClassElems classIdent elems elems
+    (labelTable, funcCodes) <- addClassElems classIdent elems elems
+    (lt, vrc, rlu, nextLabel, stackState, (dataCodes, strCount)) <- get 
+    let newDataCodes = BLst [dataCodes, BLst [ BStr $ classLabel classIdent ++ ": .quad " ++ classLabel classIdent, labelTable, BStr "\n" ]]
+    put (lt, vrc, rlu, nextLabel, stackState, (newDataCodes, strCount))
     return $ BLst [
-            BStr $ "" ++ classLabel classIdent ++ ":\n",
-            BStr $ "\tjmp " ++ classLabel classIdent ++ "\n",
-            jmpTable,
             funcCodes
         ]
 

@@ -239,6 +239,9 @@ builtInFunctions = [
     ]
 
 jmpSize = 5
+labelSize = 8
+methodDepthStep = labelSize
+
 
 formClass'' :: ClassForm -> [ClassElem] -> Except String ClassForm
 formClass'' form [] = return form
@@ -252,7 +255,7 @@ formClass'' form (elem:elems) = do
             Just _ -> throwError $ "Multiple definitions of: " ++ showIdent ident ++ "  at: " ++ showPos pos
             Nothing -> formClass'' (bimap
                 (Data.Map.insert ident (Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args, AttrLocMet methodSize))
-                (second (+jmpSize))
+                (second (+methodDepthStep))
                 form) elems
 
 checkClassElems' :: Data.Set.Set Ident -> [ClassElem] -> Except String ()
@@ -273,7 +276,7 @@ formClass' form elems = do
     formClass'' form elems
 
 formClass :: [ClassElem] -> Except String ClassForm
-formClass = formClass' (Data.Map.empty, (16, jmpSize))
+formClass = formClass' (Data.Map.empty, (16, methodDepthStep))
 
 data Val = ValBool Bool
     | ValInt Integer
