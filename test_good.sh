@@ -1,5 +1,5 @@
 #!/bin/bash
-FILES="./lattests/*/*.lat"
+FILES="./lattests/good/*/*.lat"
 
 for f in $FILES
 do
