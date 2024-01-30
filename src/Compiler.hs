@@ -495,6 +495,16 @@ compileExpr' (ENew pos newVar) r = do
                         Reg _ -> r
                         _ -> argRegLoc2
                 loopLabel <- newLabel
+                let classAttrCount = div (classSize - 16) 8
+                let loopCode = if classAttrCount > 0 
+                        then BLst [
+                            BStr $ loopLabel ++ ":\n",
+                            BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
+                            moveRegsLocs (Lit 0) (Mem 16 reg argRegLoc1 8),
+                            BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
+                            BStr $ "\tjnz " ++ loopLabel ++ "\n"
+                        ]
+                        else BLst []
                 return $ BLst [
                         moveRegsLocs (Lit classSize) argRegLoc0,
                         BStr   "\tcall malloc\n",
@@ -502,11 +512,7 @@ compileExpr' (ENew pos newVar) r = do
                         BStr $ "\tleaq " ++ classLabel classIdent ++ "(%rip), " ++ showRegLoc argRegLoc1 ++ "\n", 
                         moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
                         moveRegsLocs (Lit $ div (classSize - 16) 8) argRegLoc1,
-                        BStr $ loopLabel ++ ":\n",
-                        BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
-                        moveRegsLocs (Lit 0) (Mem 16 reg argRegLoc1 8),
-                        BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
-                        BStr $ "\tjnz " ++ loopLabel ++ "\n",
+                        loopCode,
                         moveRegsLocs reg r
                     ]
             Str tpPos -> return $ BLst [
@@ -523,6 +529,7 @@ compileExpr' (ENew pos newVar) r = do
                     _ -> argRegLoc2
             exprCode <- compileExpr' expr argRegLoc0
             loopLabel <- newLabel
+            loopSkipLabel <- newLabel
             releaseTmpRegLoc regLocLen
             return $ BLst [
                     exprCode,
@@ -533,11 +540,14 @@ compileExpr' (ENew pos newVar) r = do
                     moveRegsLocs regLocLen argRegLoc1,
                     moveRegsLocs (Reg rax) reg,
                     moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
+                    BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
+                    BStr $ "\tjz " ++ loopSkipLabel ++ "\n",
                     BStr $ loopLabel ++ ":\n",
                     BStr $ "\tdecq " ++ showRegLoc argRegLoc1 ++ "\n",
                     moveRegsLocs (Lit 0) (Mem 16 reg argRegLoc1 8),
                     BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
                     BStr $ "\tjnz " ++ loopLabel ++ "\n",
+                    BStr $ loopSkipLabel ++ ":\n",
                     moveRegsLocs reg r
                 ]
 compileExpr' (EString pos str) r = do

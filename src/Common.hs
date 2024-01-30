@@ -271,7 +271,7 @@ formClass'' classIdent form (elem:elems) = do
                     if perfectMatchType tp newTp
                         then formClass'' classIdent (triMap
                             (Data.Map.insert ident (tp, AttrLocMet depth))
-                            (Data.Map.insert methodSize (ident, classIdent))
+                            (Data.Map.insert depth (ident, classIdent))
                             id
                             form) elems
                         else throwError $ "Function type mismatch at function overwrite: " ++ showIdent ident ++ "\n"

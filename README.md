@@ -7,4 +7,4 @@ program wypisze wtedy ERROR\n z powodem błędu lub OK\n jeśli kod został zaak
 
 Sprawdzane są wszystkie podane rozszerzenia poza metodami wirtualnymi tzn tablice, klasy z dziedziczeniem
 
-Kompilacja działa na maszynie stosowej bez rozszerzeń
+Kompilacja działa na wszystkich rozszerzeniach z minimalnymi optymalizacji. Nie ma odśmiecania.
