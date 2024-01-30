@@ -1,0 +1,50 @@
+class Person {
+    int age;
+    int happiness;
+
+    int getAge() {
+        return age;
+    }
+    int getHappiness() {
+        return happiness;
+    }
+}
+
+class Parent extends Person {
+    Person[] children;
+    Parent spouse;
+
+    int getHappiness() {
+        int total = happiness + spouse.happiness/2;
+        for (Person child : children) {
+            total = total + child.getHappiness()/2;
+        }
+        return total;
+    }
+}
+
+int main() {
+    Person child1 = new Person;
+    child1.happiness = 4;
+    Person child2 = new Person;
+    child2.happiness = 4;
+    Parent parent1 = new Parent;
+    parent1.children = new Person[2];
+    parent1.children[0] = child1;
+    parent1.children[1] = child2;
+    Parent parent2 = new Parent;
+    parent2.children = new Person[2];
+    parent2.children[0] = child1;
+    parent2.children[1] = child2;
+    parent1.spouse = parent2;
+    parent2.spouse = parent1;
+    Person[] family = new Person[4];
+    family[0] = child1;
+    family[1] = child2;
+    family[2] = parent1;
+    family[3] = parent2;
+    for (Person person : family) {
+        printInt(person.getHappiness());
+    }
+    return 0;
+}

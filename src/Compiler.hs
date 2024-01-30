@@ -116,6 +116,11 @@ getClassForm classIdent = do
         Nothing -> throwError $ "unregistered class " ++ showIdent classIdent
         Just (form, parentIdent) -> return form
 
+getAttrMap :: Ident -> CompilerMonad ClassAttrs
+getAttrMap classIdent = do
+    (attrMap, _, _) <- getClassForm classIdent
+    return attrMap
+
 newLabel :: CompilerMonad String
 newLabel = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
@@ -282,17 +287,23 @@ fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocSta
     then return (BLst [], Mem dist regLocStart regLocStep step, [], BLst [])
     else if isRegLocLocal regLocStep
         then do
+            (fixCode, regLocStart, regLocsToRelease, releaseCode) <- fixMemRegLoc regLocStart
             rVar0 <- getFreeRegLoc
             let (codeGetVarSpace, codeReleaseVarSpace, rVar) = if isRegLocLocal rVar0
                 then (BLst [], BLst [], rVar0)
                 else if regLocStep == Reg 13
                     then (moveRegsLocs (Reg 14) rVar0, moveRegsLocs rVar0 (Reg 14), Reg 14)
                     else (moveRegsLocs (Reg 13) rVar0, moveRegsLocs rVar0 (Reg 13), Reg 13)
+            releaseTmpRegLocs regLocsToRelease
             return (BLst [
+                fixCode,
+                codeGetVarSpace,
                 moveRegsLocs regLocStart rVar,
-                codeGetVarSpace
-                ], Mem dist rVar regLocStep step, [rVar0], codeReleaseVarSpace)
+                releaseCode
+                ], Mem dist rVar regLocStep step, [regLocStart, rVar0], codeReleaseVarSpace)
         else do 
+            (fixCode0, regLocStart, regLocsToRelease0, releaseCode0) <- fixMemRegLoc regLocStart
+            (fixCode1, regLocStep, regLocsToRelease1, releaseCode1) <- fixMemRegLoc regLocStep
             rVar0 <- getFreeRegLoc
             (codeGetVarSpace, codeReleaseVarSpace, rVar) <- if isRegLocLocal rVar0
                 then return (BLst [], BLst [], rVar0)
@@ -305,10 +316,16 @@ fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocSta
                     return (moveRegsLocs (Reg 14) rIdx0, moveRegsLocs rIdx0 (Reg 14), Reg 14)
             let codeGetSpace = BLst [codeGetVarSpace, codeGetIdxSpace]
             let codeReleaseSpace = BLst [codeReleaseVarSpace, codeReleaseIdxSpace]
+            releaseTmpRegLocs regLocsToRelease0
+            releaseTmpRegLocs regLocsToRelease1
             return (BLst [
+                fixCode0,
+                fixCode1,
+                codeGetSpace,
                 moveRegsLocs regLocStart rVar,
                 moveRegsLocs regLocStep rIdx,
-                codeGetSpace
+                releaseCode0,
+                releaseCode1
                 ], Mem dist rVar rIdx step, [rVar0, rIdx0], codeReleaseSpace)
 fixMemRegLoc regLoc = return (BLst [], regLoc, [], BLst [])
 
@@ -316,11 +333,17 @@ extractMemRegLoc :: RegLoc -> CompilerMonad (StringBuilder, RegLoc)
 extractMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocStart && isRegLocLocal regLocStep
     then return (BLst [], Mem dist regLocStart regLocStep step)
     else do
-        (codeMake, rVar, rIdx) <- makeIntoLocal2 regLocStart regLocStep rax rdx
+        (extractCode0, regLocStartNew) <- extractMemRegLoc regLocStart
+        (extractCode1, regLocStepNew) <- extractMemRegLoc regLocStep
+        (codeMake, rVar, rIdx) <- makeIntoLocal2 regLocStartNew regLocStepNew rax rdx
+        releaseTmpRegLoc regLocStartNew
         releaseTmpRegLoc regLocStart
+        releaseTmpRegLoc regLocStepNew
         releaseTmpRegLoc regLocStep
         retRegLoc <- getFreeRegLoc
         return (BLst [
+            extractCode0,
+            extractCode1,
             codeMake,
             moveRegsLocs (Mem dist rVar rIdx step) retRegLoc
             ], retRegLoc)
@@ -341,10 +364,7 @@ getVarRegLoc (AttrVar pos var attrIdent) = do
         Array _pos _baseTp -> do
             return (BLst [codeVar], Mem 8 regVar (Lit 0) 0)
         Class _pos classIdent -> do
-            (envVar, envClass) <- ask
-            (attrMap, _, classSize) <- case Data.Map.lookup classIdent envClass of
-                    Just (classForm, parentIdent) -> return classForm
-                    Nothing -> throwError $ "Attribute call on unregistered class " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
+            attrMap <- getAttrMap classIdent
             (tp, attrLoc) <- case Data.Map.lookup attrIdent attrMap of
                     Just (tp, attrDepth) -> return (tp, attrDepth)
                     Nothing -> throwError $ "Attribute " ++ showIdent attrIdent ++ " doesn't exist in class " ++ show tp ++ "at: " ++ showPos pos ++ "\n"
@@ -811,9 +831,7 @@ compileExpr (EApp pos var exprs) =
             classIdent <- case classTp of
                 Class _ classIdent -> return classIdent
                 _ -> throwError $ "unregistered class at: " ++ showPos pos
-            (attrMap, _, classSize) <- case Data.Map.lookup classIdent envClass of
-                Nothing -> throwError $ "unregistered class at: " ++ showPos pos
-                Just (classForm, parentIdent) -> return classForm
+            attrMap <- getAttrMap classIdent
             attrLoc <- case Data.Map.lookup funIdent attrMap of
                 Nothing -> throwError $ "No attribute " ++ showIdent funIdent ++ " in class " ++ showIdent classIdent ++ " at: "++ showPos pos
                 Just (tp, attrLoc) -> return attrLoc
@@ -1180,27 +1198,20 @@ compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
             codeTail
         ])
 
-addClassElems :: Ident -> [ClassElem] -> [ClassElem] -> CompilerMonad StringBuilder
+addClassElems :: Ident -> [(Ident, (Type, AttrLoc))] -> [ClassElem] -> CompilerMonad StringBuilder
 addClassElems classIdent [] compileElems = do
     loc <- newLoc
     reserveRegLoc globalSelfRegLoc loc (Class Nothing classIdent) [IdentUse globalIdentSelf]
     local (first $ Data.Map.insert globalIdentSelf loc) (compileClassElems' classIdent compileElems)
-addClassElems classIdent (elem:elems) compileElems = do
-    case elem of
-        Attribute pos tp ident -> do
+addClassElems classIdent ((ident, (tp, attrLoc)):elems) compileElems = do
+    case attrLoc of
+        AttrLocVar depth -> do
             loc <- newLoc
-            (attrMap, _, classSize) <- getClassForm classIdent
-            attrDepth <- case Data.Map.lookup ident attrMap of
-                Nothing -> throwError $ "Attribute " ++ showIdent ident ++ " has not been added to class " ++ showIdent classIdent ++ " at: " ++ showPos pos
-                Just (_, attrDepth) -> case attrDepth of
-                    AttrLocVar attrDepth -> return attrDepth
-                    _ -> throwError $ "Attribute " ++ showIdent ident ++ " has type mismatch in class " ++ showIdent classIdent ++ " at: " ++ showPos pos
-            let regLoc = Mem attrDepth globalSelfRegLoc (Lit 0) 0
+            let regLoc = Mem depth globalSelfRegLoc (Lit 0) 0
             reserveRegLoc regLoc loc tp [IdentUse ident]
             local (first $ Data.Map.insert ident loc) (addClassElems classIdent elems compileElems)
-        Method pos retTp ident args block -> do
+        AttrLocMet depth -> do
             loc <- newLoc
-            let tp = Fun pos retTp (argsToTypes args)
             insertLocTp loc tp
             local (first $ Data.Map.insert ident loc) (addClassElems classIdent elems compileElems)
 
@@ -1224,7 +1235,8 @@ makeLabelTable classIdent = do
 
 compileClassElems :: Ident -> [ClassElem] -> CompilerMonad StringBuilder
 compileClassElems classIdent elems = do
-    funcCodes <- addClassElems classIdent elems elems
+    attrMap <- getAttrMap classIdent
+    funcCodes <- addClassElems classIdent (Data.Map.assocs attrMap) elems
     labelTable <- makeLabelTable classIdent
     (lt, vrc, rlu, nextLabel, stackState, (dataCodes, strCount)) <- get 
     let newDataCodes = BLst [dataCodes, labelTable]

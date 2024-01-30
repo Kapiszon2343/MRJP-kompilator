@@ -23,7 +23,7 @@ import Common
       Loc,
       Env,
       ClassForm,
-      EnvLoc, formClass', formClass )
+      EnvLoc, formClass', formClass, AttrLoc, ClassAttrs )
 import qualified Latte.Abs as Data.Map
 import Data.Bool (bool)
 import Data.Array (Array)
@@ -105,6 +105,18 @@ modifyMem :: (Mem -> Mem) -> TypeCheckerMonad ()
 modifyMem f =
     modify $ Data.Bifunctor.first f
 
+getClassForm :: Ident -> TypeCheckerMonad ClassForm
+getClassForm classIdent = do
+    (_, envClass)<- ask
+    case Data.Map.lookup classIdent envClass of
+        Nothing -> throwError $ "unregistered class " ++ showIdent classIdent
+        Just (form, parentIdent) -> return form
+
+getAttrMap :: Ident -> TypeCheckerMonad ClassAttrs
+getAttrMap classIdent = do
+    (attrMap, _, _) <- getClassForm classIdent
+    return attrMap
+
 getLoc :: BNFC'Position -> Ident -> TypeCheckerMonad Loc 
 getLoc pos ident = do 
     (locs, _) <- ask
@@ -173,21 +185,15 @@ checkFunc :: Env -> BNFC'Position -> Type -> [Arg] -> Block -> TypeCheckerMonad 
 checkFunc env pos ret args block = do
     local (const env) (checkFunc' pos Data.Map.empty ret args block)
 
-checkClass' :: EnvLoc -> [ClassElem] -> [ClassElem] -> TypeCheckerMonad ()
+checkClass' :: EnvLoc -> [(Ident, (Type, AttrLoc))] -> [ClassElem] -> TypeCheckerMonad ()
 checkClass' envLoc [] [] = return ()
 checkClass' envLoc [] (elem:elems) = case elem of
     Attribute pos tp ident -> checkClass' envLoc [] elems
     Method pos retTp ident args block -> do
         checkFunc' pos envLoc retTp args block
         checkClass' envLoc [] elems
-checkClass' envLoc (elem:tail) elems = do
+checkClass' envLoc ((ident, (tp, attrLoc)):tail) elems = do
     loc <- newloc
-    let ident = case elem of
-            Attribute pos tp ident -> ident
-            Method pos retTp ident args block -> ident
-    let tp = case elem of
-            Attribute pos tp ident -> tp
-            Method pos retTp ident args block -> Fun pos retTp $ Prelude.foldl (\tps arg -> argToType arg:tps) [] args 
     modifyMem (Data.Map.insert loc tp)
     local (first $ Data.Map.insert ident loc) (checkClass' (Data.Map.insert ident loc envLoc) tail elems)
 
@@ -195,7 +201,8 @@ checkClass :: Env -> Ident -> [ClassElem] -> TypeCheckerMonad ()
 checkClass env ident elems = do
     loc <- newloc
     modifyMem (Data.Map.insert loc (Class Nothing ident))
-    local (const (first (Data.Map.insert (Ident "self") loc) env)) (checkClass' (Data.Map.singleton (Ident "self") loc) elems elems)
+    attrMap <- getAttrMap ident
+    local (const (first (Data.Map.insert (Ident "self") loc) env)) (checkClass' (Data.Map.singleton (Ident "self") loc) (Data.Map.assocs attrMap) elems)
 
 makeArray :: [Expr] -> Type -> BNFC'Position -> TypeCheckerMonad Type
 makeArray [] retTp _ = return retTp

@@ -20,7 +20,8 @@ data AttrLoc = Inline
     | AttrLocVar StructDepth
     | AttrLocMet MethodDepth
 type ClassSize = (StructDepth, MethodDepth)
-type ClassForm = (Data.Map.Map Ident (Type, AttrLoc), Data.Map.Map MethodDepth (Ident, Ident), ClassSize)
+type ClassAttrs = Data.Map.Map Ident (Type, AttrLoc)
+type ClassForm = (ClassAttrs, Data.Map.Map MethodDepth (Ident, Ident), ClassSize)
 type EnvLoc = Data.Map.Map Ident Loc
 type EnvClass = Data.Map.Map Ident (ClassForm, Ident)
 
@@ -42,8 +43,11 @@ triMap fa fb fc (a,b,c) = (fa a, fb b, fc c)
 showRegLoc (Reg r) = showReg r
 showRegLoc (RBP n) = show (-n) ++ "(%rbp)"
 showRegLoc (Lit n) = "$" ++ show n
-showRegLoc (Mem 0 ref (Lit 0) _) = "(" ++ showRegLoc ref ++ ")"
-showRegLoc (Mem n ref (Lit 0) _) = show n ++ "(" ++ showRegLoc ref ++ ")"
+showRegLoc (Mem a ref (Lit b) c) = do
+    let x = a + b*c
+    if x == 0
+        then "(" ++ showRegLoc ref ++ ")"
+        else show x ++ "(" ++ showRegLoc ref ++ ")"
 showRegLoc (Mem 0 ref counter m) = "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 showRegLoc (Mem n ref counter m) = show n ++ "(" ++ showRegLoc ref ++ ", " ++ showRegLoc counter ++ ", " ++ show m ++ ")"
 
