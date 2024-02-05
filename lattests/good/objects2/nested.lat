@@ -1,0 +1,27 @@
+class Node {
+  int elem;
+  Node next;
+
+  void setElem(int c) { elem = c; }
+
+  void setNext(Node n) { next = n; }
+
+  int getElem() { return elem; }
+
+  Node getNext() { return next; }
+}
+
+int main() {
+    Node n1 = new Node;
+    n1.elem = 42;
+    Node n2 = new Node;
+    n2.next = n1;
+    Node n3 = new Node;
+    n3.next = n2;
+    Node n4 = new Node;
+    n4.next = n3;
+    Node n5 = new Node;
+    n5.next = n4;
+    printInt(n5.next.next.next.next.elem);
+    return 0;
+}
