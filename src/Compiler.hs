@@ -287,20 +287,20 @@ fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocSta
     then return (BLst [], Mem dist regLocStart regLocStep step, [], BLst [])
     else if isRegLocLocal regLocStep
         then do
-            (fixCode, regLocStart, regLocsToRelease, releaseCode) <- fixMemRegLoc regLocStart
+            (fixCode, regLocStart2, regLocsToRelease, releaseCode) <- fixMemRegLoc regLocStart
             rVar0 <- getFreeRegLoc
             let (codeGetVarSpace, codeReleaseVarSpace, rVar) = if isRegLocLocal rVar0
                 then (BLst [], BLst [], rVar0)
-                else if regLocStep == Reg 13
-                    then (moveRegsLocs (Reg 14) rVar0, moveRegsLocs rVar0 (Reg 14), Reg 14)
-                    else (moveRegsLocs (Reg 13) rVar0, moveRegsLocs rVar0 (Reg 13), Reg 13)
+                else if regLocStep == Reg 12
+                    then (moveRegsLocs (Reg 13) rVar0, moveRegsLocs rVar0 (Reg 13), Reg 13)
+                    else (moveRegsLocs (Reg 12) rVar0, moveRegsLocs rVar0 (Reg 12), Reg 12)
             releaseTmpRegLocs regLocsToRelease
             return (BLst [
                 fixCode,
                 codeGetVarSpace,
-                moveRegsLocs regLocStart rVar,
+                moveRegsLocs regLocStart2 rVar,
                 releaseCode
-                ], Mem dist rVar regLocStep step, [regLocStart, rVar0], codeReleaseVarSpace)
+                ], Mem dist rVar regLocStep step, [regLocStart2, rVar0], codeReleaseVarSpace)
         else do 
             (fixCode0, regLocStart, regLocsToRelease0, releaseCode0) <- fixMemRegLoc regLocStart
             (fixCode1, regLocStep, regLocsToRelease1, releaseCode1) <- fixMemRegLoc regLocStep
@@ -308,12 +308,12 @@ fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocSta
             (codeGetVarSpace, codeReleaseVarSpace, rVar) <- if isRegLocLocal rVar0
                 then return (BLst [], BLst [], rVar0)
                 else do
-                    return (moveRegsLocs (Reg 13) rVar0, moveRegsLocs rVar0 (Reg 13), Reg 13)
+                    return (moveRegsLocs (Reg 12) rVar0, moveRegsLocs rVar0 (Reg 12), Reg 12)
             rIdx0 <- getFreeRegLoc
-            (codeGetIdxSpace, codeReleaseIdxSpace, rIdx) <- if isRegLocLocal rVar0
+            (codeGetIdxSpace, codeReleaseIdxSpace, rIdx) <- if isRegLocLocal rIdx0
                 then return (BLst [], BLst [], rIdx0)
                 else do
-                    return (moveRegsLocs (Reg 14) rIdx0, moveRegsLocs rIdx0 (Reg 14), Reg 14)
+                    return (moveRegsLocs (Reg 13) rIdx0, moveRegsLocs rIdx0 (Reg 13), Reg 13)
             let codeGetSpace = BLst [codeGetVarSpace, codeGetIdxSpace]
             let codeReleaseSpace = BLst [codeReleaseVarSpace, codeReleaseIdxSpace]
             releaseTmpRegLocs regLocsToRelease0
@@ -1047,8 +1047,11 @@ compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = do
 compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
     loc <- newLoc
     (getArrCode, regLocArr) <- compileExpr arrExpr
-    regLocIt <- getFreeRegLoc
-    let regLocElem = Mem 16 regLocArr regLocIt 8 
+    regLocIt0 <- getFreeRegLoc
+    let regLocElem0 = Mem 16 regLocArr regLocIt0 8 
+    (codeFixVar, regLocElem, regLocsToRelease, codeFixVarReleases) <- fixMemRegLoc regLocElem0
+    let regLocIt = extractMemIt regLocElem regLocIt0
+    releaseTmpRegLocs [regLocIt0 | regLocIt /= regLocIt0]
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
         (Data.Map.insert loc elemTp lt, l), 
@@ -1098,9 +1101,12 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
         nextLabel, 
         stackState, 
         strCodes)
+    releaseTmpRegLocs regLocsToRelease 
     return (BLst [
+            codeFixVar,
             codeIncrSet,
-            codeWhile
+            codeWhile,
+            codeFixVarReleases
         ], id)
 compileStmt (SExp pos expr) = do
     (code, r) <- compileExpr expr

@@ -125,6 +125,10 @@ moveRegsLocs regLoc1 regLoc2 = if regLoc1 /= regLoc2
                                     ++ "\tmovq " ++ showReg rax ++ ", " ++ showRegLoc regLoc2 ++ "\n"
                                 else BLst []
 
+extractMemIt :: RegLoc -> RegLoc -> RegLoc
+extractMemIt (Mem dipl regLocPointer regLocIt step) _ = regLocIt
+extractMemIt _ def = def
+
 argToType :: Arg -> Type
 argToType (Arg _pos tp _ident) = tp
 

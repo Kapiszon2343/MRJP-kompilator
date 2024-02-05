@@ -1,0 +1,22 @@
+int main() {
+    int[][][] cube = new int[][][3];
+    for (int[][] plane : cube) {
+        plane = new int[][3];
+        for (int[] vec : plane) {
+            vec = new int[3];
+            vec[1] = 42;
+        }
+    }
+    int[][] square = cube[1];
+    int[] line = square[1];
+    line[1] = 69;
+    for (int[][] plane : cube) {
+        for (int[] vec : plane) {
+            for (int val : vec) {
+                printInt(val);
+            }
+        }
+    }
+    printString("Finish");
+    return 0;
+}
