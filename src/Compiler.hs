@@ -1046,21 +1046,22 @@ compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = do
         ], id)
 compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
     loc <- newLoc
-    (getArrCode, regLocArr) <- compileExpr arrExpr
-    regLocIt0 <- getFreeRegLoc
-    let regLocElem0 = Mem 16 regLocArr regLocIt0 8 
-    (codeFixVar, regLocElem, regLocsToRelease, codeFixVarReleases) <- fixMemRegLoc regLocElem0
-    let regLocIt = extractMemIt regLocElem regLocIt0
-    releaseTmpRegLocs [regLocIt0 | regLocIt /= regLocIt0]
+    regLocArr <- getNextStack
+    getArrCode <- compileExpr' arrExpr regLocArr
+    regLocIt <- getNextStack
+    let regLocElem = Mem 16 regLocArr regLocIt 8 
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
         (Data.Map.insert loc elemTp lt, l), 
         Data.Map.insert loc regLocElem vrc,
-        Data.Map.insert regLocIt [IdentUse elemIdent] $ Data.Map.insert regLocElem [IdentUse elemIdent] rlu, 
+        Data.Map.insert regLocIt [IdentUse elemIdent] $ Data.Map.insert regLocArr [IdentUse elemIdent] rlu, 
         nextLabel, 
         stackState, 
         strCodes)
-    let codeIncrSet = moveRegsLocs (Lit 0) regLocIt
+    let codeIncrSet = BLst [
+            getArrCode,
+            moveRegsLocs (Lit 0) regLocIt
+            ]
     let envMod1 = first (Data.Map.insert elemIdent loc)
     labelLoop <- newLabel
     labelCond <- newLabel
@@ -1083,7 +1084,8 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
     let codeIterate = BLst [
                 BStr $ "\tincq " ++ showRegLoc regLocIt ++ "\n"
             ]
-    (codeLoop, blockEnvMod) <- local envMod1 $ compileStmt blockStmt
+    let envMod = envMod1
+    (codeLoop, blockEnvMod) <- local envMod $ compileStmt blockStmt
     let codeWhile = BLst [
                 BStr $ "\tjmp " ++ labelCond ++ "\n",
                 BStr $ labelLoop ++ ":\n",
@@ -1097,16 +1099,13 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
     put (
         (lt, l), 
         vrc,
-        Data.Map.insert regLocIt [] $ Data.Map.insert regLocElem [] rlu, 
+        Data.Map.insert regLocIt [] $ Data.Map.insert regLocArr [] rlu, 
         nextLabel, 
         stackState, 
         strCodes)
-    releaseTmpRegLocs regLocsToRelease 
     return (BLst [
-            codeFixVar,
             codeIncrSet,
-            codeWhile,
-            codeFixVarReleases
+            codeWhile
         ], id)
 compileStmt (SExp pos expr) = do
     (code, r) <- compileExpr expr
