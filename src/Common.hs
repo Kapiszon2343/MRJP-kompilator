@@ -197,6 +197,7 @@ builtInFunctions = [
         ++ "\tmov %rsp, %rbp\n"
         ++ "\tsub $32, %rsp\n"
         ++ "\tmov " ++ showRegLoc argRegLoc0 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n"
+        ++ "\tadd $8, " ++ showRegLoc argRegLoc1 ++ "\n"
         ++ "\tleaq .printString(%rip), " ++ showRegLoc argRegLoc0 ++ "\n"
         ++ "\tcall printf\n"
         ++ "\tadd $32, %rsp\n"

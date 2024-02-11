@@ -531,6 +531,7 @@ compileExpr' (ENew pos newVar) r = do
                         moveRegsLocs (Reg rax) reg,
                         BStr $ "\tleaq " ++ classLabel classIdent ++ "(%rip), " ++ showRegLoc argRegLoc1 ++ "\n", 
                         moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
+                        moveRegsLocs (Lit 1) (Mem 0 reg (Lit 0) 0),
                         moveRegsLocs (Lit $ div (classSize - 16) 8) argRegLoc1,
                         loopCode,
                         moveRegsLocs reg r
@@ -560,6 +561,7 @@ compileExpr' (ENew pos newVar) r = do
                     moveRegsLocs regLocLen argRegLoc1,
                     moveRegsLocs (Reg rax) reg,
                     moveRegsLocs argRegLoc1 (Mem 8 reg (Lit 0) 0),
+                    moveRegsLocs (Lit 1) (Mem 0 reg (Lit 0) 0),
                     BStr $ "\ttest " ++ showRegLoc argRegLoc1 ++ ", " ++ showRegLoc argRegLoc1 ++ "\n",
                     BStr $ "\tjz " ++ loopSkipLabel ++ "\n",
                     BStr $ loopLabel ++ ":\n",
@@ -575,7 +577,7 @@ compileExpr' (EString pos str) r = do
     let strLabel = ".str_" ++ show strCodeNr
     let newStrCodes = BLst [
                 strCodes,
-                BStr $ strLabel ++ ": .ascii \"" ++ str ++ "\\0\"\n"
+                BStr $ strLabel ++ ": .ascii \"\\0\\0\\0\\0\\0\\0\\0\\1" ++ str ++ "\\0\"\n"
             ]
     put (lt, vrc, rlu, nextLabel, stackState, (newStrCodes, strCodeNr+1))
     case r of
@@ -618,9 +620,11 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         moveRegsLocs (Reg 12) stackSpace1,
                         moveRegsLocs (Reg 13) stackSpace2,
 
+                        BStr $ "\tadd $8, " ++ showRegLoc tmpReg1 ++ "\n",
+                        BStr $ "\tadd $8, " ++ showRegLoc tmpReg2 ++ "\n",
                         moveRegsLocs tmpReg1 (Reg 12),
                         moveRegsLocs tmpReg2 (Reg 13),
-                        moveRegsLocs (Lit 1) argRegLoc0,
+                        moveRegsLocs (Lit 9) argRegLoc0,
 
                         BStr $ "\tjmp " ++ loopCond1 ++ "\n",
                         BStr $ loopStart1 ++ ":\n",
@@ -643,6 +647,7 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                         
                         BStr   "\tcall malloc\n",
                         moveRegsLocs (Reg rax) argRegLoc0,
+                        BStr $ "\tadd $8, " ++ showRegLoc argRegLoc0 ++ "\n",
                            
                         BStr $ "\tjmp " ++ loopCond3 ++ "\n",
                         BStr $ loopStart3 ++ ":\n",
