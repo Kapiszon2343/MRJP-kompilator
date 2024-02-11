@@ -384,6 +384,48 @@ maybeMoveReg' (reg:regs) regLoc = if regLoc == Reg reg
 maybeMoveReg :: RegLoc -> CompilerMonad (StringBuilder, RegLoc)
 maybeMoveReg = maybeMoveReg' (rax:tmpRegs)
 
+freeReference :: Type -> RegLoc -> CompilerMonad (Bool, StringBuilder)
+freeReference (Str _) regLoc  = return (True, BLst [
+        moveRegsLocs regLoc argRegLoc0,
+        BStr "\tcall free \n"
+    ])
+freeReference _ _ = return (False, BLst [])
+
+checkReference :: Type ->  RegLoc -> CompilerMonad StringBuilder
+checkReference tp regLoc = do
+    (ignore, freeCode) <- freeReference tp regLoc
+    if ignore then return $ BLst []
+    else do 
+        skipLabel <- newLabel
+        return $ BLst [
+                BStr $ "\tcmpq $0, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
+                BStr $ "\tjnz " ++ skipLabel ++ "\n",
+                freeCode,
+                BStr $ skipLabel ++ ":\n"
+            ]
+
+deleteReference :: Type -> RegLoc -> CompilerMonad StringBuilder
+deleteReference tp regLoc = do
+    (ignore, freeCode) <- freeReference tp regLoc
+    if ignore then return $ BLst []
+    else do 
+        skipLabel <- newLabel
+        return $ BLst [
+                BStr $ "\tsubq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
+                BStr $ "\tjnz " ++ skipLabel ++ "\n",
+                freeCode,
+                BStr $ skipLabel ++ ":\n"
+            ]
+
+addReference' :: RegLoc -> CompilerMonad StringBuilder
+addReference' regLoc = return $ BStr $ "\taddq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n" 
+
+addReference :: Type -> RegLoc -> CompilerMonad StringBuilder
+addReference (Str _) regLoc = addReference' regLoc
+addReference (Array _ _) regLoc = addReference' regLoc
+addReference (Class _ _) regLoc = addReference' regLoc
+addReference _ _ = return $ BLst []
+
 calcExprType :: Expr -> CompilerMonad Type
 calcExprType (ENew pos new) =
     case new of
@@ -414,40 +456,60 @@ calcExprType (ERel pos expr1 op expr2) = return $ Bool pos
 calcExprType (EAnd pos expr1 expr2) = return $ Bool pos
 calcExprType (EOr pos expr1 expr2) = return $ Bool pos
 
-compileIf :: Expr -> String -> String -> CompilerMonad StringBuilder -- TODO opt
-compileIf (ELitTrue pos) lt lf = return $ BStr $ "\tjmp " ++ lt ++ "\n"
-compileIf (ELitFalse pos) lt lf = return $ BStr $ "\tjmp " ++ lf ++ "\n"
-compileIf (EVar pos var) lt lf = do
+compileIf :: Expr -> String -> String -> String -> CompilerMonad StringBuilder -- TODO opt
+compileIf (ELitTrue pos) lt lf ln = if lt == ln 
+    then return $ BLst []
+    else return $ BStr $ "\tjmp " ++ lt ++ "\n"
+compileIf (ELitFalse pos) lt lf ln = if lf == ln 
+    then return $ BLst []
+    else return $ BStr $ "\tjmp " ++ lf ++ "\n"
+compileIf (EVar pos var) lt lf ln = do
     (getCode, regLoc2) <- getVarRegLoc var
     (fixCode, regLoc) <- extractMemRegLoc regLoc2
-    return $ BLst [
-        getCode,
-        fixCode,
-        moveRegsLocs regLoc (Reg rax),
-        BStr  "\ttest %rax, %rax\n",
-        BStr $ "\tjz " ++ lf ++ "\n",
-        BStr $ "\tjmp " ++ lt ++ "\n"
-        ]
-compileIf (ENot pos expr) lt lf = compileIf expr lf lt
-compileIf (EOr pos expr0 expr1) lt lf = do
+    if lt == ln 
+        then return $ BLst [
+            getCode,
+            fixCode,
+            moveRegsLocs regLoc (Reg rax),
+            BStr  "\ttest %rax, %rax\n",
+            BStr $ "\tjz " ++ lf ++ "\n"
+            ]
+    else if lf == ln
+        then return $ BLst [
+            getCode,
+            fixCode,
+            moveRegsLocs regLoc (Reg rax),
+            BStr  "\ttest %rax, %rax\n",
+            BStr $ "\tjnz " ++ lt ++ "\n"
+            ]
+        else return $ BLst [
+            getCode,
+            fixCode,
+            moveRegsLocs regLoc (Reg rax),
+            BStr  "\ttest %rax, %rax\n",
+            BStr $ "\tjz " ++ lf ++ "\n",
+            BStr $ "\tjmp " ++ lt ++ "\n"
+            ]
+compileIf (ENot pos expr) lt lf ln = compileIf expr lf lt ln
+compileIf (EOr pos expr0 expr1) lt lf ln = do
     lm <- newLabel
-    code0 <- compileIf expr0 lt lm
-    code1 <- compileIf expr1 lt lf
+    code0 <- compileIf expr0 lt lm lm
+    code1 <- compileIf expr1 lt lf ln
     return $ BLst [
         code0,
         BStr $ lm ++ ":\n",
         code1
         ]
-compileIf (EAnd pos expr0 expr1) lt lf = do
+compileIf (EAnd pos expr0 expr1) lt lf ln = do
     lm <- newLabel
-    code0 <- compileIf expr0 lm lf
-    code1 <- compileIf expr1 lt lf
+    code0 <- compileIf expr0 lm lf lm
+    code1 <- compileIf expr1 lt lf ln
     return $ BLst [
         code0,
         BStr $ lm ++ ":\n",
         code1
         ]
-compileIf (ERel pos expr0 op expr1) lt lf = do
+compileIf (ERel pos expr0 op expr1) lt lf ln = do
     (code1, r1') <- compileExpr expr0
     (codeMoveR1, r1) <- maybeMoveReg r1'
     (code2, r2) <- compileExpr expr1
@@ -474,7 +536,30 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
             GE _ -> BStr $ "\tjge " ++ lt ++ "\n"
             EQU _ -> BStr $ "\tje " ++ lt ++ "\n"
             NE _ -> BStr $ "\tjne " ++ lt ++ "\n"
-    return $ BLst [
+    let codeJmpFalse = case op of
+            LTH _ -> BStr $ "\tjge " ++ lf ++ "\n"
+            LE _ -> BStr $ "\tjg " ++ lf ++ "\n"
+            GTH _ -> BStr $ "\tjle " ++ lf ++ "\n"
+            GE _ -> BStr $ "\tjl " ++ lf ++ "\n"
+            EQU _ -> BStr $ "\tjne " ++ lf ++ "\n"
+            NE _ -> BStr $ "\tje " ++ lf ++ "\n"
+    if lf == ln
+        then return $ BLst [
+            code1,
+            codeMoveR1,
+            code2,
+            codeCmp,
+            codeJmpTrue
+        ]
+    else if lt == ln
+        then return $ BLst [
+            code1,
+            codeMoveR1,
+            code2,
+            codeCmp,
+            codeJmpFalse
+        ]
+        else return $ BLst [
             code1,
             codeMoveR1,
             code2,
@@ -482,16 +567,30 @@ compileIf (ERel pos expr0 op expr1) lt lf = do
             codeJmpTrue,
             BStr $ "\tjmp " ++ lf ++ "\n"
         ]
-compileIf expr lt lf = do
+compileIf expr lt lf ln = do
     (code, regLoc) <- compileExpr expr
     releaseTmpRegLoc regLoc
-    return $ BLst [
-        code,
-        moveRegsLocs regLoc (Reg rax),
-        BStr  "\ttest %rax, %rax\n",
-        BStr $ "\tjz " ++ lf ++ "\n",
-        BStr $ "\tjmp " ++ lt ++ "\n"
-        ]
+    if lt == ln 
+        then return $ BLst [
+            code,
+            moveRegsLocs regLoc (Reg rax),
+            BStr  "\ttest %rax, %rax\n",
+            BStr $ "\tjz " ++ lf ++ "\n"
+            ]
+    else if lf == ln
+        then return $ BLst [
+            code,
+            moveRegsLocs regLoc (Reg rax),
+            BStr  "\ttest %rax, %rax\n",
+            BStr $ "\tjnz " ++ ln ++ "\n"
+            ]
+        else return $ BLst [
+            code,
+            moveRegsLocs regLoc (Reg rax),
+            BStr  "\ttest %rax, %rax\n",
+            BStr $ "\tjz " ++ lf ++ "\n",
+            BStr $ "\tjmp " ++ lt ++ "\n"
+            ]
 
 compileExprs' :: [Expr] -> [RegLoc] -> StringBuilder -> CompilerMonad StringBuilder
 compileExprs' [] _ _ = return $ BLst []
@@ -718,21 +817,21 @@ compileExpr' (ERel pos expr0 op expr1) r = do
     lt <- newLabel
     lf <- newLabel
     ln <- newLabel
-    codeIf <- compileIf (ERel pos expr0 op expr1) lt lf
+    codeIf <- compileIf (ERel pos expr0 op expr1) lt lf lt
     return $ BLst [
             codeIf,
             BStr $ lt ++ ":\n",
             moveRegsLocs (Lit 1) r,
             BStr $ "\tjmp " ++ ln ++ "\n",
             BStr $ lf ++ ":\n",
-             moveRegsLocs (Lit 0) r,
+            moveRegsLocs (Lit 0) r,
             BStr $ ln ++ ":\n"
         ]
 compileExpr' (EAnd pos expr0 expr1) r = do
     lt <- newLabel
     lf <- newLabel
     ln <- newLabel
-    codeIf <- compileIf (EAnd pos expr0 expr1) lt lf
+    codeIf <- compileIf (EAnd pos expr0 expr1) lt lf lt
     return $ BLst [
             codeIf,
             BStr $ lt ++ ":\n",
@@ -746,7 +845,7 @@ compileExpr' (EOr pos expr0 expr1) r = do
     lt <- newLabel
     lf <- newLabel
     ln <- newLabel
-    codeIf <- compileIf (EOr pos expr0 expr1) lt lf
+    codeIf <- compileIf (EOr pos expr0 expr1) lt lf lt
     return $ BLst [
             codeIf,
             BStr $ lt ++ ":\n",
@@ -981,7 +1080,7 @@ compileStmt (VRet pos) = return (BFil filRetN, id)
 compileStmt (Cond pos expr stmt) = do
     labelTrue <- newLabel
     labelExit <- newLabel
-    codeCond <- compileIf expr labelTrue labelExit
+    codeCond <- compileIf expr labelTrue labelExit labelTrue
     (codeTrue, trueEnvMod) <- compileStmt stmt
     return (BLst [
             codeCond,
@@ -993,7 +1092,7 @@ compileStmt (CondElse pos expr stmtTrue stmtFalse) = do
     labelTrue <- newLabel
     labelFalse <- newLabel
     labelExit <- newLabel
-    codeCond <- compileIf expr labelTrue labelFalse
+    codeCond <- compileIf expr labelTrue labelFalse labelTrue
     (codeTrue, trueEnvMod) <- compileStmt stmtTrue
     (codeFalse, falseEnvMod) <- compileStmt stmtFalse
     return (BLst [
@@ -1009,7 +1108,7 @@ compileStmt (While pos expr stmt) = do
     labelLoop <- newLabel
     labelCond <- newLabel
     labelExit <- newLabel
-    codeCond <- compileIf expr labelLoop labelExit
+    codeCond <- compileIf expr labelLoop labelExit labelExit
     (codeLoop, blockEnvMod) <- compileStmt stmt
     return (BLst [
             BStr $ "\tjmp " ++ labelCond ++ "\n",
