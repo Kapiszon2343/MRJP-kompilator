@@ -16,7 +16,6 @@ import qualified Text.ParserCombinators.ReadP as Data.Map
 import GHC.IO.Handle.Internals (readTextDevice)
 import InfoDigger (digStmtInfoPub)
 import Control.Exception.Base (throw)
-import Distribution.Compat.CharParsing (between)
 
 instance Ord RegLoc where
     compare (Reg r0) (Reg r1) = compare r0 r1
@@ -1409,7 +1408,7 @@ stableRegsToStack = stableRegsToStack' stableRegs
 stableClassRegsToStack :: CompilerMonad (StringBuilder, StringBuilder)
 stableClassRegsToStack = stableRegsToStack' $ tail stableRegs
 
-compileClassElems' :: Ident -> [ClassElem] -> CompilerMonad (StringBuilder)
+compileClassElems' :: Ident -> [ClassElem] -> CompilerMonad StringBuilder
 compileClassElems' _ [] = return (BLst [])
 compileClassElems' selfIdent ((Attribute pos tp ident):classElems) = compileClassElems' selfIdent classElems
 compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
