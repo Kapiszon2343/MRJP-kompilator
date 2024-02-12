@@ -150,28 +150,51 @@ getNextStack' stackSize = do
 getNextStack :: CompilerMonad RegLoc
 getNextStack = getNextStack' 8
 
-getFreeReg' :: Reg -> CompilerMonad Reg
-getFreeReg' r = do
-    if r > 15
-        then throwError "Attempting to get not existing register. No code should be able to reach this message"
-        else do
-            (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
-            case lookupArr (Reg r) rlu of
-                [] -> return r
-                _ -> getFreeReg' (r+1)
+getFreeRegLoc'' :: [Reg] -> LocUse -> CompilerMonad RegLoc
+getFreeRegLoc'' [] locUse = getNextStack
+getFreeRegLoc'' (reg:regs) locUse = do
+    (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
+    case lookupArr (Reg reg) rlu of
+        [] -> do
+            put (lt, vrc, Data.Map.insert (Reg reg) [locUse] rlu, nextLabel, (currStackSize, maxStackSize), strCodes)
+            return $ Reg reg
+        _ -> getFreeRegLoc'' regs locUse
 
-getFreeRegLoc' :: [Reg] -> CompilerMonad RegLoc
-getFreeRegLoc' [] = getNextStack
-getFreeRegLoc' (reg:regs) = do
+getFreeStableRegLoc' :: LocUse -> CompilerMonad RegLoc
+getFreeStableRegLoc' = getFreeRegLoc'' stableRegs
+
+getFreeStableRegLoc :: CompilerMonad RegLoc
+getFreeStableRegLoc = getFreeRegLoc'' stableRegs TMPUse
+
+getFreeRegLoc' :: LocUse -> CompilerMonad RegLoc
+getFreeRegLoc' = getFreeRegLoc'' allUsableRegs
+
+getFreeRegLoc :: CompilerMonad RegLoc
+getFreeRegLoc = getFreeRegLoc'' allUsableRegs TMPUse
+
+forceFreeRegLoc'' :: [Reg] -> Reg -> CompilerMonad (StringBuilder, StringBuilder, RegLoc, [RegLoc])
+forceFreeRegLoc'' [] forcedReg = do
+    stackRegLoc <- getNextStack
+    let reg = 15
+    return (
+            moveRegsLocs (Reg reg) stackRegLoc,
+            moveRegsLocs stackRegLoc (Reg reg),
+            Reg reg,
+            [stackRegLoc]
+        )
+forceFreeRegLoc'' (reg:regs) forcedReg = do
     (lt, vrc, rlu, nextLabel,  (currStackSize, maxStackSize), strCodes) <- get
     case lookupArr (Reg reg) rlu of
         [] -> do
             put (lt, vrc, Data.Map.insert (Reg reg) [TMPUse] rlu, nextLabel, (currStackSize, maxStackSize), strCodes)
-            return $ Reg reg
-        _ -> getFreeRegLoc' regs
+            return (BLst [], BLst [], Reg reg, [Reg reg])
+        _ -> forceFreeRegLoc'' regs forcedReg
 
-getFreeRegLoc :: CompilerMonad RegLoc
-getFreeRegLoc = getFreeRegLoc' stableRegs
+forceFreeStableRegLoc' :: Reg -> CompilerMonad (StringBuilder, StringBuilder, RegLoc, [RegLoc])
+forceFreeStableRegLoc' = forceFreeRegLoc'' stableRegs
+
+forceFreeRegLoc' :: Reg -> CompilerMonad (StringBuilder, StringBuilder, RegLoc, [RegLoc])
+forceFreeRegLoc' = forceFreeRegLoc'' allUsableRegs
 
 makeIntoReg :: RegLoc -> Reg -> CompilerMonad (StringBuilder, RegLoc)
 makeIntoReg (Reg r) _ = return (BLst [], Reg r)
@@ -288,7 +311,7 @@ freeReg r = do
         Nothing -> return $ BLst []
         Just [] -> return $ BLst []
         Just ref -> do
-            newRegLoc <- getFreeRegLoc
+            newRegLoc <- getFreeStableRegLoc
             (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
             let rlu1 = Data.Map.insert (Reg r) [] rlu
             let rlu2 = Data.Map.insert newRegLoc ref rlu1
@@ -305,7 +328,7 @@ freeRegLoc r = do
                 Nothing -> return $ BLst []
                 Just [] -> return $ BLst []
                 Just ref -> do
-                    newRegLoc <- getFreeRegLoc
+                    newRegLoc <- getFreeStableRegLoc
                     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
                     let rlu1 = Data.Map.insert r [] rlu
                     let rlu2 = Data.Map.insert newRegLoc ref rlu1
@@ -326,7 +349,7 @@ fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocSta
     else if isRegLocLocal regLocStep
         then do
             (fixCode, regLocStart2, regLocsToRelease, releaseCode) <- fixMemRegLoc regLocStart
-            rVar0 <- getFreeRegLoc
+            rVar0 <- getFreeStableRegLoc
             let (codeGetVarSpace, codeReleaseVarSpace, rVar) = if isRegLocLocal rVar0
                 then (BLst [], BLst [], rVar0)
                 else if regLocStep == Reg 12
@@ -342,12 +365,12 @@ fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocSta
         else do 
             (fixCode0, regLocStart, regLocsToRelease0, releaseCode0) <- fixMemRegLoc regLocStart
             (fixCode1, regLocStep, regLocsToRelease1, releaseCode1) <- fixMemRegLoc regLocStep
-            rVar0 <- getFreeRegLoc
+            rVar0 <- getFreeStableRegLoc
             (codeGetVarSpace, codeReleaseVarSpace, rVar) <- if isRegLocLocal rVar0
                 then return (BLst [], BLst [], rVar0)
                 else do
                     return (moveRegsLocs (Reg 12) rVar0, moveRegsLocs rVar0 (Reg 12), Reg 12)
-            rIdx0 <- getFreeRegLoc
+            rIdx0 <- getFreeStableRegLoc
             (codeGetIdxSpace, codeReleaseIdxSpace, rIdx) <- if isRegLocLocal rIdx0
                 then return (BLst [], BLst [], rIdx0)
                 else do
@@ -378,7 +401,7 @@ extractMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLo
         releaseTmpRegLoc regLocStart
         releaseTmpRegLoc regLocStepNew
         releaseTmpRegLoc regLocStep
-        retRegLoc <- getFreeRegLoc
+        retRegLoc <- getFreeStableRegLoc
         return (BLst [
             extractCode0,
             extractCode1,
@@ -415,7 +438,7 @@ maybeMoveReg' :: [Reg] -> RegLoc -> CompilerMonad (StringBuilder, RegLoc)
 maybeMoveReg' [] reg = return (BLst [], reg)
 maybeMoveReg' (reg:regs) regLoc = if regLoc == Reg reg
     then do
-        newRegLoc <- getFreeRegLoc
+        newRegLoc <- getFreeStableRegLoc
         return (moveRegsLocs regLoc newRegLoc, newRegLoc)
     else maybeMoveReg' regs regLoc
 
@@ -758,7 +781,7 @@ compileExpr' (ENew pos newVar) r = do
                 ]
             _ -> compileExpr' (ELitInt pos 0) r
         NewArray newPos internalNew expr -> do
-            regLocLen <- getFreeRegLoc
+            regLocLen <- getFreeStableRegLoc
             let reg = case r of
                     Reg _ -> r
                     _ -> argRegLoc2
@@ -1107,7 +1130,7 @@ compileExpr (EMul pos expr1 op expr2) = do
     (code2, r2) <- compileExpr expr2
     (code25, r25) <- case r2 of
         Lit _ -> do
-            r25 <- getFreeRegLoc
+            r25 <- getFreeStableRegLoc
             return (moveRegsLocs r2 r25, r25)
         _ -> maybeMoveReg r2
     let (codeMul, outReg) = case op of
@@ -1132,7 +1155,7 @@ compileExpr (EMul pos expr1 op expr2) = do
 -- compileExpr (EAnd pos expr0 expr1) = throwError "unimplemented"
 -- compileExpr (EOr pos expr0 expr1) = throwError "unimplemented"
 compileExpr expr = do
-    r <- getFreeRegLoc
+    r <- getFreeStableRegLoc
     code <- compileExpr' expr r
     return (code, r)
 
@@ -1244,7 +1267,7 @@ compileStmt (While pos expr stmt) = do
         ], id)
 compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = do
     locIncr <- newLoc
-    regLoc <- getFreeRegLoc
+    regLoc <- getFreeStableRegLoc
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
         (Data.Map.insert locIncr incrTp lt, l), 

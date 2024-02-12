@@ -101,6 +101,8 @@ stableRegs :: [Reg]
 stableRegs = [12..15]
 tmpRegs :: [Reg]
 tmpRegs = [rdi, rsi, rdx, rcx, r8, r9, r10, r11]
+allUsableRegs :: [Reg]
+allUsableRegs = tmpRegs ++ stableRegs
 argRegs :: [Reg]
 argRegs = case buildOS of
     Windows -> [rcx, rdx, r8, r9]
