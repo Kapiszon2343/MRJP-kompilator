@@ -582,7 +582,7 @@ compileIf expr lt lf ln = do
             code,
             moveRegsLocs regLoc (Reg rax),
             BStr  "\ttest %rax, %rax\n",
-            BStr $ "\tjnz " ++ ln ++ "\n"
+            BStr $ "\tjnz " ++ lt ++ "\n"
             ]
         else return $ BLst [
             code,
