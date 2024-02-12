@@ -29,9 +29,10 @@ instance Ord RegLoc where
     compare _ (Reg _) = GT
     compare (RBP _) _ = LT
     compare _ (RBP _) = GT
-type VariableRegisterLoc = Data.Map.Map Loc RegLoc 
-data LocUse = IdentUse Ident
+type VariableRegisterLoc = Data.Map.Map Loc [RegLoc]
+data LocUse = LocUse Loc
     | TMPUse
+    deriving Eq
 type RegisterLocUse = Data.Map.Map RegLoc [LocUse]
 type StringCodes = (StringBuilder, Int)
 type StackState = (Int, Int)
@@ -209,18 +210,19 @@ makeIntoLocal2 regLoc1 regLoc2 r1 r2 = return (BLst [
         moveRegsLocs regLoc2 (Reg r2)
     ], Reg r1, Reg r2)
 
-removeFirstTmp :: [LocUse] -> [LocUse]
-removeFirstTmp [] = []
-removeFirstTmp (TMPUse:refs) = refs
-removeFirstTmp (ref:refs) = ref:removeFirstTmp refs
+removeFirst :: Eq a => a -> [a] -> [a]
+removeFirst a [] = []
+removeFirst a (head:tail) = if head == a
+    then tail
+    else head:removeFirst a tail
 
 reserveRegLoc :: RegLoc -> Loc -> Type -> [LocUse] -> CompilerMonad ()
-reserveRegLoc regLoc loc tp [IdentUse ident] = do
+reserveRegLoc regLoc loc tp locUse = do
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
         (Data.Map.insert loc tp lt, l), 
-        Data.Map.insert loc regLoc vrc,
-        Data.Map.insert regLoc [IdentUse ident] rlu, 
+        Data.Map.insert loc [regLoc] vrc,
+        Data.Map.insert regLoc locUse rlu, 
         nextLabel, 
         stackState, 
         strCodes) -- TODO check if [ident] is correct
@@ -229,7 +231,7 @@ releaseTmpRegLoc :: RegLoc -> CompilerMonad ()
 releaseTmpRegLoc regLoc = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
     let ref = lookupArr regLoc rlu
-    let newRef = removeFirstTmp ref
+    let newRef = removeFirst TMPUse ref
     put (lt, vrc, Data.Map.insert regLoc newRef rlu, nextLabel, stackState, strCodes)
 
 releaseTmpRegLocs :: [RegLoc] -> CompilerMonad ()
@@ -242,6 +244,43 @@ releaseReg :: Reg -> CompilerMonad ()
 releaseReg reg = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (lt, vrc, Data.Map.insert (Reg reg) [] rlu, nextLabel, stackState, strCodes)
+
+releaseRegLoc :: RegLoc -> LocUse -> CompilerMonad ()
+releaseRegLoc regLoc locUse = do
+    (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
+    let ref = lookupArr regLoc rlu
+    let newRef = removeFirst locUse ref
+    put (lt, vrc, Data.Map.insert regLoc newRef rlu, nextLabel, stackState, strCodes)
+
+releaseRegLocs :: [RegLoc] -> LocUse -> CompilerMonad ()
+releaseRegLocs [] _ = return ()
+releaseRegLocs (regLoc:tail) locUse = do
+    releaseRegLoc regLoc locUse
+    releaseRegLocs tail locUse
+
+deleteLocs :: [Loc] -> CompilerMonad StringBuilder
+deleteLocs [] = return $ BLst []
+deleteLocs (loc:tail) = do
+    ((lt,l), vrc, rlu, nextLabel, stackState, strCodes) <- get
+    let regLocs = lookupArr loc vrc
+    case regLocs of
+        [] -> deleteLocs tail
+        regLoc:_ -> do
+            case Data.Map.lookup loc lt of
+                Just tp -> do
+                    codeThis <- deleteReference tp regLoc
+                    releaseRegLocs regLocs (LocUse loc)
+                    codeTail <- deleteLocs tail
+                    return $ BLst [codeThis, codeTail]
+                _ -> do
+                    releaseRegLocs regLocs (LocUse loc)
+                    deleteLocs tail
+
+deleteEnvMod :: (Env -> Env) -> CompilerMonad StringBuilder
+deleteEnvMod envMod = do
+    let (varMods, classMods) = envMod (Data.Map.empty, Data.Map.empty)
+    deleteLocs $ Data.Map.elems varMods
+
 
 freeReg :: Reg -> CompilerMonad StringBuilder
 freeReg r = do
@@ -279,8 +318,8 @@ getIdentRegLoc pos ident = do
     (lt, vrc, rlu, nextLabel, stackState, strCodes) <- get
     loc <- getIdentLoc pos ident
     case Data.Map.lookup loc vrc of
-        Nothing -> throwError ("undefined variable " ++ showIdent ident ++ " at " ++ show pos)
-        Just regLoc -> return regLoc
+        Just (regLoc:_) -> return regLoc
+        _ -> throwError ("undefined variable " ++ showIdent ident ++ " at " ++ show pos)
 
 fixMemRegLoc :: RegLoc -> CompilerMonad (StringBuilder, RegLoc, [RegLoc], StringBuilder)
 fixMemRegLoc (Mem dist regLocStart regLocStep step) = if isRegLocLocal regLocStart && isRegLocLocal regLocStep
@@ -1104,9 +1143,11 @@ compileStmt (BStmt pos (Block _bPos [])) = compileStmt (Empty pos)
 compileStmt (BStmt pos (Block bPos (stmt:stmts))) = do
     (code1, envMod) <- compileStmt stmt
     (code2, _) <- local envMod $ compileStmt (BStmt pos (Block bPos stmts))
+    deleteCode <- deleteEnvMod envMod
     return (BLst [
             code1,
-            code2
+            code2,
+            deleteCode
         ], id)
 compileStmt (Decl pos tp []) = compileStmt (Empty pos)
 compileStmt (Decl _pos tp (decl:decls)) = do
@@ -1115,7 +1156,7 @@ compileStmt (Decl _pos tp (decl:decls)) = do
             Init pos ident expr -> (ident, expr)
     loc <- newLoc
     regLoc <- getNextStack
-    reserveRegLoc regLoc loc tp [IdentUse ident]
+    reserveRegLoc regLoc loc tp [LocUse loc]
     codeHead <- compileExpr' expr regLoc
     let envMod1 = first (Data.Map.insert ident loc)
     (codeTail, envMod2) <- local envMod1 (compileStmt (Decl _pos tp decls))
@@ -1158,10 +1199,12 @@ compileStmt (Cond pos expr stmt) = do
     labelExit <- newLabel
     codeCond <- compileIf expr labelTrue labelExit labelTrue
     (codeTrue, trueEnvMod) <- compileStmt stmt
+    codeTrueCleanup <- deleteEnvMod trueEnvMod
     return (BLst [
             codeCond,
             BStr $ labelTrue ++ ":\n",
             codeTrue,
+            codeTrueCleanup,
             BStr $ labelExit ++ ":\n"
         ], id)
 compileStmt (CondElse pos expr stmtTrue stmtFalse) = do
@@ -1171,13 +1214,17 @@ compileStmt (CondElse pos expr stmtTrue stmtFalse) = do
     codeCond <- compileIf expr labelTrue labelFalse labelTrue
     (codeTrue, trueEnvMod) <- compileStmt stmtTrue
     (codeFalse, falseEnvMod) <- compileStmt stmtFalse
+    codeTrueCleanup <- deleteEnvMod trueEnvMod
+    codeFalseCleanup <- deleteEnvMod falseEnvMod
     return (BLst [
             codeCond,
             BStr $ labelTrue ++ ":\n",
             codeTrue,
+            codeTrueCleanup,
             BStr $ "\tjmp " ++ labelExit ++ "\n",
             BStr $ labelFalse ++ ":\n",
             codeFalse,
+            codeFalseCleanup,
             BStr $ labelExit ++ ":\n"
         ], id)
 compileStmt (While pos expr stmt) = do
@@ -1186,27 +1233,29 @@ compileStmt (While pos expr stmt) = do
     labelExit <- newLabel
     codeCond <- compileIf expr labelLoop labelExit labelExit
     (codeLoop, blockEnvMod) <- compileStmt stmt
+    codeBlockCleanup <- deleteEnvMod blockEnvMod
     return (BLst [
             BStr $ "\tjmp " ++ labelCond ++ "\n",
             BStr $ labelLoop ++ ":\n",
             codeLoop,
+            codeBlockCleanup,
             BStr $ labelCond ++ ":\n",
             codeCond,
             BStr $ labelExit ++ ":\n"
         ], id)
 compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = do
-    loc <- newLoc
+    locIncr <- newLoc
     regLoc <- getFreeRegLoc
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
-        (Data.Map.insert loc incrTp lt, l), 
-        Data.Map.insert loc regLoc vrc,
-        Data.Map.insert regLoc [IdentUse incrIdent] rlu, 
+        (Data.Map.insert locIncr incrTp lt, l), 
+        Data.Map.insert locIncr [regLoc] vrc,
+        Data.Map.insert regLoc [LocUse locIncr] rlu, 
         nextLabel, 
         stackState, 
         strCodes)
     codeIncrSet <- compileExpr' incrSet regLoc
-    let envMod1 = first (Data.Map.insert incrIdent loc)
+    let envMod1 = first (Data.Map.insert incrIdent locIncr)
     (retCode, _) <- local envMod1 $ compileStmt (
             While pos cond (BStmt pos (Block pos [
                 blockStmt,
@@ -1225,16 +1274,18 @@ compileStmt (For pos incrTp incrIdent incrSet cond incrStmt blockStmt) = do
             retCode
         ], id)
 compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
-    loc <- newLoc
+    locElem <- newLoc
+    locBase <- newLoc
+    locIt <- newLoc
     regLocArr <- getNextStack
     getArrCode <- compileExpr' arrExpr regLocArr
     regLocIt <- getNextStack
     let regLocElem = Mem 16 regLocArr regLocIt 8 
     ((lt, l), vrc, rlu, nextLabel, stackState, strCodes) <- get
     put (
-        (Data.Map.insert loc elemTp lt, l), 
-        Data.Map.insert loc regLocElem vrc,
-        Data.Map.insert regLocIt [IdentUse elemIdent] $ Data.Map.insert regLocArr [IdentUse elemIdent] rlu, 
+        (Data.Map.insert locElem elemTp lt, l), 
+        Data.Map.insert locElem [regLocElem] $ Data.Map.insert locIt [regLocIt] $ Data.Map.insert locBase [regLocArr] vrc,
+        Data.Map.insert regLocIt [LocUse locIt] $ Data.Map.insert regLocArr [LocUse locBase] rlu, 
         nextLabel, 
         stackState, 
         strCodes)
@@ -1242,7 +1293,7 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
             getArrCode,
             moveRegsLocs (Lit 0) regLocIt
             ]
-    let envMod1 = first (Data.Map.insert elemIdent loc)
+    let envMod1 = first (Data.Map.insert elemIdent locElem)
     labelLoop <- newLabel
     labelCond <- newLabel
     labelExit <- newLabel
@@ -1266,10 +1317,12 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
             ]
     let envMod = envMod1
     (codeLoop, blockEnvMod) <- local envMod $ compileStmt blockStmt
+    codeBlockCleanup <- deleteEnvMod blockEnvMod
     let codeWhile = BLst [
                 BStr $ "\tjmp " ++ labelCond ++ "\n",
                 BStr $ labelLoop ++ ":\n",
                 codeLoop,
+                codeBlockCleanup,
                 codeIterate,
                 BStr $ labelCond ++ ":\n",
                 codeCond,
@@ -1301,13 +1354,13 @@ addArgs' stmt _ [] [] = do
 addArgs' stmt regLocs [] ((regLocIn, Arg pos tp ident):moveArgs) = do
     loc <- newLoc
     regLocOut <- getNextStack
-    reserveRegLoc regLocOut loc tp [IdentUse ident]
+    reserveRegLoc regLocOut loc tp [LocUse loc]
     let codeMov = moveRegsLocs regLocIn regLocOut
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs [] moveArgs)
     return (BLst [codeMoves, codeMov], codeStmt, envModRet)
 addArgs' stmt (regLoc:regLocs) ((Arg pos tp ident):args) moveArgs = do
     loc <- newLoc
-    reserveRegLoc regLoc loc tp [IdentUse ident]
+    reserveRegLoc regLoc loc tp [LocUse loc]
     (codeMoves, codeStmt, envModRet) <- local (first (Data.Map.insert ident loc)) (addArgs' stmt regLocs args moveArgs)
     return (codeMoves, codeStmt, envModRet)
 addArgs' stmt regLocs args moveArgs = throwError $ "addArgs' stmt regLocs:" ++ show regLocs ++ "args: " ++ show args ++ "moveArgs" ++ show moveArgs
@@ -1388,14 +1441,14 @@ compileClassElems' selfIdent ((Method pos tp ident args block):classElems) = do
 addClassElems :: Ident -> [(Ident, (Type, AttrLoc))] -> [ClassElem] -> CompilerMonad StringBuilder
 addClassElems classIdent [] compileElems = do
     loc <- newLoc
-    reserveRegLoc globalSelfRegLoc loc (Class Nothing classIdent) [IdentUse globalIdentSelf]
+    reserveRegLoc globalSelfRegLoc loc (Class Nothing classIdent) [LocUse loc]
     local (first $ Data.Map.insert globalIdentSelf loc) (compileClassElems' classIdent compileElems)
 addClassElems classIdent ((ident, (tp, attrLoc)):elems) compileElems = do
     case attrLoc of
         AttrLocVar depth -> do
             loc <- newLoc
             let regLoc = Mem depth globalSelfRegLoc (Lit 0) 0
-            reserveRegLoc regLoc loc tp [IdentUse ident]
+            reserveRegLoc regLoc loc tp [LocUse loc]
             local (first $ Data.Map.insert ident loc) (addClassElems classIdent elems compileElems)
         AttrLocMet depth -> do
             loc <- newLoc
