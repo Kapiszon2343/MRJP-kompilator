@@ -392,33 +392,50 @@ freeReference (Str _) regLoc  = return (True, BLst [
 freeReference _ _ = return (False, BLst [])
 
 checkReference :: Type ->  RegLoc -> CompilerMonad StringBuilder
-checkReference tp regLoc = do
-    (ignore, freeCode) <- freeReference tp regLoc
-    if ignore then return $ BLst []
-    else do 
-        skipLabel <- newLabel
-        return $ BLst [
-                BStr $ "\tcmpq $0, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
-                BStr $ "\tjnz " ++ skipLabel ++ "\n",
-                freeCode,
-                BStr $ skipLabel ++ ":\n"
-            ]
+checkReference tp regLoc0 = do
+    let regLoc = if isRegLocLocal regLoc0
+        then regLoc0
+        else argRegLoc0
+    (freeCodeIsPresent, freeCode) <- freeReference tp regLoc
+    if freeCodeIsPresent
+        then do 
+            skipLabel <- newLabel
+            return $ BLst [
+                    moveRegsLocs regLoc0 regLoc,
+                    BStr $ "\tcmpq $0, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
+                    BStr $ "\tjnz " ++ skipLabel ++ "\n",
+                    freeCode,
+                    BStr $ skipLabel ++ ":\n"
+                ]
+        else return $ BLst []
 
 deleteReference :: Type -> RegLoc -> CompilerMonad StringBuilder
-deleteReference tp regLoc = do
-    (ignore, freeCode) <- freeReference tp regLoc
-    if ignore then return $ BLst []
-    else do 
-        skipLabel <- newLabel
-        return $ BLst [
-                BStr $ "\tsubq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
-                BStr $ "\tjnz " ++ skipLabel ++ "\n",
-                freeCode,
-                BStr $ skipLabel ++ ":\n"
-            ]
+deleteReference tp regLoc0 = do
+    let regLoc = if isRegLocLocal regLoc0
+        then regLoc0
+        else argRegLoc0
+    (freeCodeIsPresent, freeCode) <- freeReference tp regLoc
+    if freeCodeIsPresent 
+        then do 
+            skipLabel <- newLabel
+            return $ BLst [
+                    moveRegsLocs regLoc0 regLoc,
+                    BStr $ "\tsubq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
+                    BStr $ "\tjnz " ++ skipLabel ++ "\n",
+                    freeCode,
+                    BStr $ skipLabel ++ ":\n"
+                ]
+        else return $ BLst []
 
 addReference' :: RegLoc -> CompilerMonad StringBuilder
-addReference' regLoc = return $ BStr $ "\taddq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n" 
+addReference' regLoc0 = do
+    let regLoc = if isRegLocLocal regLoc0
+        then regLoc0
+        else argRegLoc0
+    return $ BLst [
+            moveRegsLocs regLoc0 regLoc,
+            BStr $ "\taddq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n" 
+        ]
 
 addReference :: Type -> RegLoc -> CompilerMonad StringBuilder
 addReference (Str _) regLoc = addReference' regLoc
@@ -654,7 +671,7 @@ compileExpr' (ENew pos newVar) r = do
             return $ BLst [
                     exprCode,
                     moveRegsLocs argRegLoc0 regLocLen,
-                    BStr $ "\tadd $2, " ++ showRegLoc argRegLoc0 ++ "\n",
+                    BStr $ "\taddq $2, " ++ showRegLoc argRegLoc0 ++ "\n",
                     BStr $ "\tshl $3, " ++ showRegLoc argRegLoc0 ++ "\n",
                     BStr   "\tcall malloc\n",
                     moveRegsLocs regLocLen argRegLoc1,
@@ -700,77 +717,75 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
             loopStart3 <- newLabel
             loopCond4 <- newLabel
             loopStart4 <- newLabel
+            stackSpace1 <- getNextStack
+            stackSpace2 <- getNextStack
             if r /= r15
                 then do
                     releaseTmpRegLoc r15
                     releaseTmpRegLoc r2
                 else releaseTmpRegLoc r2
-            let (tmpReg1, tmpReg2) = if r15 == Reg rax || r2 == Reg rdx
-                then (Reg rdx, Reg rax)
-                else (Reg rax, Reg rdx)
-            stackSpace1 <- getNextStack
-            stackSpace2 <- getNextStack
+            releaseTmpRegLoc stackSpace1
+            releaseTmpRegLoc stackSpace2
             return $ BLst [
                         code1,
                         code15,
                         code2,
-                        moveRegsLocs r2 tmpReg2,
-                        moveRegsLocs r15 tmpReg1,
-                        moveRegsLocs (Reg 12) stackSpace1,
-                        moveRegsLocs (Reg 13) stackSpace2,
+                        moveRegsLocs r2 stackSpace2,
+                        moveRegsLocs r15 stackSpace1,
 
-                        BStr $ "\tadd $8, " ++ showRegLoc tmpReg1 ++ "\n",
-                        BStr $ "\tadd $8, " ++ showRegLoc tmpReg2 ++ "\n",
-                        moveRegsLocs tmpReg1 (Reg 12),
-                        moveRegsLocs tmpReg2 (Reg 13),
                         moveRegsLocs (Lit 9) argRegLoc0,
 
+                        moveRegsLocs stackSpace1 (Reg rax),
+                        BStr $ "\taddq $8, " ++ showRegLoc (Reg rax) ++ "\n",
                         BStr $ "\tjmp " ++ loopCond1 ++ "\n",
                         BStr $ loopStart1 ++ ":\n",
-                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
-                        BStr   "\tadd $1, %rax\n",
+                        BStr $ "\taddq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        BStr   "\taddq $1, %rax\n",
                         BStr $ loopCond1 ++ ":\n",
-                        BStr   "\tmovb 0(%rax), %dl\n",
+                        BStr   "\tmovb (%rax), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart1 ++ "\n",
                         
-                        moveRegsLocs (Reg 13) (Reg rax),
+                        moveRegsLocs stackSpace2 (Reg rax),
+                        BStr $ "\taddq $8, " ++ showRegLoc (Reg rax) ++ "\n",
                         BStr $ "\tjmp " ++ loopCond2 ++ "\n",
                         BStr $ loopStart2 ++ ":\n",
-                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
-                        BStr   "\tadd $1, %rax\n",
+                        BStr $ "\taddq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        BStr   "\taddq $1, %rax\n",
                         BStr $ loopCond2 ++ ":\n",
-                        BStr   "\tmovb 0(%rax), %dl\n",
+                        BStr   "\tmovb (%rax), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart2 ++ "\n",
                         
                         BStr   "\tcall malloc\n",
                         moveRegsLocs (Reg rax) argRegLoc0,
-                        BStr $ "\tadd $8, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        BStr $ "\taddq $8, " ++ showRegLoc argRegLoc0 ++ "\n",
                            
+                        moveRegsLocs stackSpace1 (Reg 10),
+                        BStr $ "\taddq $8, " ++ showRegLoc (Reg 10) ++ "\n",
                         BStr $ "\tjmp " ++ loopCond3 ++ "\n",
                         BStr $ loopStart3 ++ ":\n",
-                        BStr $ "\tmovb %dl, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
-                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
-                        BStr   "\tadd $1, %r12\n",
+                        BStr $ "\tmovb %dl, (" ++ showRegLoc argRegLoc0 ++ ")\n",
+                        BStr $ "\taddq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        BStr   "\taddq $1, %r10\n",
                         BStr $ loopCond3 ++ ":\n",
-                        BStr   "\tmovb 0(%r12), %dl\n",
+                        BStr   "\tmovb (%r10), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart3 ++ "\n",
                         
+                        moveRegsLocs stackSpace2 (Reg r10),
+                        BStr $ "\taddq $8, " ++ showRegLoc (Reg r10) ++ "\n",
                         BStr $ "\tjmp " ++ loopCond4 ++ "\n",
                         BStr $ loopStart4 ++ ":\n",
-                        BStr $ "\tmovb %dl, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
-                        BStr $ "\tadd $1, " ++ showRegLoc argRegLoc0 ++ "\n",
-                        BStr   "\tadd $1, %r13\n",
+                        BStr $ "\tmovb %dl, (" ++ showRegLoc argRegLoc0 ++ ")\n",
+                        BStr $ "\taddq $1, " ++ showRegLoc argRegLoc0 ++ "\n",
+                        BStr   "\taddq $1, %r10\n",
                         BStr $ loopCond4 ++ ":\n",
-                        BStr   "\tmovb 0(%r13), %dl\n",
+                        BStr   "\tmovb (%r10), %dl\n",
                         BStr   "\ttest %dl, %dl\n",
                         BStr $ "\tjnz " ++ loopStart4 ++ "\n",
                         
-                        BStr $ "\tmovb $0, 0(" ++ showRegLoc argRegLoc0 ++ ")\n",
-                        moveRegsLocs stackSpace2 (Reg 13),
-                        moveRegsLocs stackSpace1 (Reg 12),
+                        BStr $ "\tmovb $0, (" ++ showRegLoc argRegLoc0 ++ ")\n",
                         moveRegsLocs (Reg rax) r
                     ]
         _ -> do
@@ -790,12 +805,12 @@ compileExpr' (EAdd pos expr0 op expr1) r = do
                     (True, Plus _) -> BLst [
                             moveRegsLocs r2 tmpReg,
                             moveRegsLocs r15 r,
-                            BStr $ "\tadd " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
+                            BStr $ "\taddq " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
                         ]
                     (False, Plus _) -> BLst [
                             moveRegsLocs r2 tmpReg,
                             moveRegsLocs r15 r,
-                            BStr $ "\tadd " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
+                            BStr $ "\taddq " ++ showRegLoc tmpReg ++ ", " ++ showRegLoc r ++ "\n"
                         ]
                     (True, Minus _) -> BLst [
                             moveRegsLocs r2 tmpReg,
@@ -912,7 +927,7 @@ compileExpr (EApp pos var exprs) =
                 then (BStr $ "\tsub " ++ showRegLoc (Lit (16 - mod stackAdd' 16)) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n", stackAdd' + 16 - mod stackAdd' 16)
                 else (BLst [], stackAdd')
             let codeStackRestore = if stackAdd > 0
-                then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
+                then BStr $ "\taddq " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
                 else BLst []
             labelF <- functionLabel var
             return (
@@ -947,7 +962,7 @@ compileExpr (EApp pos var exprs) =
                 then (BStr $ "\tsub " ++ showRegLoc (Lit (16 - mod stackAdd' 16)) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n", stackAdd' + 16 - mod stackAdd' 16)
                 else (BLst [], stackAdd')
             let codeStackRestore = if stackAdd > 0
-                then BStr $ "\tadd " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
+                then BStr $ "\taddq " ++ showRegLoc (Lit stackAdd) ++ ", " ++ showRegLoc (Reg rsp) ++ "\n"
                 else BLst []
             releaseTmpRegLocs [classRegLoc, r12Mem]
             labelF <- functionLabel var
@@ -960,7 +975,7 @@ compileExpr (EApp pos var exprs) =
                     moveRegsLocs classRegLoc globalSelfRegLoc,
                     moveRegsLocs (Mem 8 globalSelfRegLoc (Lit 0) 0) (Reg rax),
                     moveRegsLocs (Mem methodDepth (Reg rax) (Lit 0) 0) (Reg rax),
-                    --BStr $ "\tadd " ++ showRegLoc (Lit methodDepth) ++ ", " ++ showRegLoc (Reg rax) ++ "\n",
+                    --BStr $ "\taddq " ++ showRegLoc (Lit methodDepth) ++ ", " ++ showRegLoc (Reg rax) ++ "\n",
                     BStr $ "\tcall *" ++ showRegLoc (Reg rax)++ "\n",
                     -- BStr $ "\tcall " ++ labelF ++ "\n",
                     moveRegsLocs r12Mem globalSelfRegLoc,
@@ -1050,11 +1065,14 @@ compileStmt (Decl _pos tp (decl:decls)) = do
 compileStmt (Ass pos var expr) = do
     (codeGetVar, regLocVar0) <- getVarRegLoc var
     (codeFixVar, regLocVar, regLocsToRelease, codeFixVarReleases) <- fixMemRegLoc regLocVar0
+    varTp <- getVarType var
+    codeDelete <- deleteReference varTp regLocVar
     codeExpr <- compileExpr' expr regLocVar
     releaseTmpRegLocs regLocsToRelease
     return (BLst [
             codeGetVar,
             codeFixVar,
+            codeDelete,
             codeExpr,
             codeFixVarReleases
         ], id)
@@ -1062,7 +1080,7 @@ compileStmt (Incr pos var) = do
     (codeGetVar, regLoc) <- getVarRegLoc var
     releaseTmpRegLoc regLoc
     case regLoc of
-        Reg reg -> return (BStr $ "\tadd $1, " ++ showReg reg ++ "\n", id)
+        Reg reg -> return (BStr $ "\taddq $1, " ++ showReg reg ++ "\n", id)
         _ -> compileStmt (Ass pos var (EAdd pos (ELitInt pos 1) (Plus pos) (EVar pos var)))
 compileStmt (Decr pos var) = do
     (codeGetVar, regLoc) <- getVarRegLoc var
@@ -1212,9 +1230,11 @@ compileStmt (ForEach pos elemTp elemIdent arrExpr blockStmt) = do
             codeWhile
         ], id)
 compileStmt (SExp pos expr) = do
-    (code, r) <- compileExpr expr
+    (codeExpr, r) <- compileExpr expr
+    tp <- calcExprType expr
+    deleteCode <- checkReference tp r
     releaseTmpRegLoc r
-    return (code, id)
+    return (BLst [codeExpr, deleteCode], id)
 
 addArgs' :: Stmt -> [RegLoc] -> [Arg] -> [(RegLoc, Arg)] -> CompilerMonad (StringBuilder, StringBuilder, Env -> Env)
 addArgs' stmt _ [] [] = do
