@@ -176,6 +176,12 @@ showVar (AttrVar _ var ident) = showVar var ++ "." ++ showIdent ident
 classLabel :: Ident -> String
 classLabel classIdent = "class_" ++ showIdent classIdent
 
+destructorLabel :: Ident -> String
+destructorLabel classIdent = "classDestructor_" ++ showIdent classIdent
+
+labelLine :: String -> StringBuilder
+labelLine label = BStr $ label ++ ":\n"
+
 builtInFunctions :: [BuiltInFunction]
 builtInFunctions = [
     (Ident "printInt", Fun Nothing (Void Nothing) [Int Nothing], BStr 

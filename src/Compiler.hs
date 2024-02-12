@@ -385,10 +385,62 @@ maybeMoveReg :: RegLoc -> CompilerMonad (StringBuilder, RegLoc)
 maybeMoveReg = maybeMoveReg' (rax:tmpRegs)
 
 freeReference :: Type -> RegLoc -> CompilerMonad (Bool, StringBuilder)
-freeReference (Str _) regLoc  = return (True, BLst [
+freeReference (Str _) regLoc = return (True, BLst [
         moveRegsLocs regLoc argRegLoc0,
         BStr "\tcall free \n"
     ])
+freeReference (Array _ baseTp) regLoc = do
+    let deleteInner = case baseTp of
+            (Str _) -> True
+            (Array _ _) -> True
+            (Class _ _) -> True
+            _ -> False
+    if deleteInner
+        then do
+            arrRegLoc <- getNextStack
+            iterRegLoc <- getNextStack
+            let innerRegLoc = argRegLoc0
+            let tmpRegLoc1 = argRegLoc1
+            let tmpRegLoc2 = argRegLoc2
+            loopLabel <- newLabel
+            condLabel <- newLabel
+            skipLabel <- newLabel
+            deleteCode <- deleteReference baseTp innerRegLoc
+            releaseTmpRegLocs [arrRegLoc, iterRegLoc]
+            return (True, BLst [
+                    moveRegsLocs regLoc tmpRegLoc1,
+                    moveRegsLocs tmpRegLoc1 arrRegLoc,
+                    BStr $ "\tcmpq $0, " ++ showRegLoc (Mem 8 tmpRegLoc1 (Lit 0) 0) ++ "\n",
+                    BStr $ "\tjz " ++ skipLabel ++ "\n",
+                    moveRegsLocs (Mem 8 tmpRegLoc1 (Lit 0) 0) iterRegLoc,
+                    labelLine loopLabel,
+                    moveRegsLocs arrRegLoc tmpRegLoc1,
+                    BStr $ "\tdecq " ++ showRegLoc iterRegLoc ++ "\n",
+                    moveRegsLocs iterRegLoc tmpRegLoc2,
+                    moveRegsLocs (Mem 8 tmpRegLoc1 tmpRegLoc2 8) innerRegLoc,
+                    deleteCode,
+                    labelLine condLabel,
+                    BStr $ "\tcmpq " ++ showRegLoc (Lit 0) ++ ", " ++ showRegLoc iterRegLoc ++ "\n",
+                    BStr $ "\tjnz " ++ loopLabel ++ "\n",
+                    labelLine skipLabel,
+                    moveRegsLocs regLoc argRegLoc0,
+                    BStr "\tcall free \n"
+                ])
+        else return (True, BLst [
+            moveRegsLocs regLoc argRegLoc0,
+            BStr "\tcall free \n"
+        ])
+freeReference (Class _ _) regLoc0 = do
+    storageRegLoc <- getNextStack
+    releaseTmpRegLoc storageRegLoc
+    return (True, BLst [
+            moveRegsLocs globalSelfRegLoc storageRegLoc,
+            moveRegsLocs regLoc0 globalSelfRegLoc,
+            moveRegsLocs (Mem 8 globalSelfRegLoc (Lit 0) 0) (Reg rax),
+            moveRegsLocs (Mem 0 (Reg rax) (Lit 0) 0) (Reg rax),
+            BStr $ "\tcall *" ++ showRegLoc (Reg rax)++ "\n",
+            moveRegsLocs storageRegLoc globalSelfRegLoc
+        ])
 freeReference _ _ = return (False, BLst [])
 
 checkReference :: Type ->  RegLoc -> CompilerMonad StringBuilder
@@ -401,11 +453,13 @@ checkReference tp regLoc0 = do
         then do 
             skipLabel <- newLabel
             return $ BLst [
+                    BStr $ "\tcmpq $0, " ++ showRegLoc regLoc0 ++ "\n",
+                    BStr $ "\tjz " ++ skipLabel ++ "\n",
                     moveRegsLocs regLoc0 regLoc,
                     BStr $ "\tcmpq $0, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
                     BStr $ "\tjnz " ++ skipLabel ++ "\n",
                     freeCode,
-                    BStr $ skipLabel ++ ":\n"
+                    labelLine skipLabel 
                 ]
         else return $ BLst []
 
@@ -419,11 +473,13 @@ deleteReference tp regLoc0 = do
         then do 
             skipLabel <- newLabel
             return $ BLst [
+                    BStr $ "\tcmpq $0, " ++ showRegLoc regLoc0 ++ "\n",
+                    BStr $ "\tjz " ++ skipLabel ++ "\n",
                     moveRegsLocs regLoc0 regLoc,
                     BStr $ "\tsubq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
                     BStr $ "\tjnz " ++ skipLabel ++ "\n",
                     freeCode,
-                    BStr $ skipLabel ++ ":\n"
+                    labelLine skipLabel 
                 ]
         else return $ BLst []
 
@@ -432,9 +488,13 @@ addReference' regLoc0 = do
     let regLoc = if isRegLocLocal regLoc0
         then regLoc0
         else argRegLoc0
+    skipLabel <- newLabel
     return $ BLst [
+            BStr $ "\tcmpq $0, " ++ showRegLoc regLoc0 ++ "\n",
+            BStr $ "\tjz " ++ skipLabel ++ "\n",
             moveRegsLocs regLoc0 regLoc,
-            BStr $ "\taddq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n" 
+            BStr $ "\taddq $1, " ++ showRegLoc (Mem 0 regLoc (Lit 0) 0) ++ "\n",
+            labelLine skipLabel 
         ]
 
 addReference :: Type -> RegLoc -> CompilerMonad StringBuilder
@@ -975,9 +1035,7 @@ compileExpr (EApp pos var exprs) =
                     moveRegsLocs classRegLoc globalSelfRegLoc,
                     moveRegsLocs (Mem 8 globalSelfRegLoc (Lit 0) 0) (Reg rax),
                     moveRegsLocs (Mem methodDepth (Reg rax) (Lit 0) 0) (Reg rax),
-                    --BStr $ "\taddq " ++ showRegLoc (Lit methodDepth) ++ ", " ++ showRegLoc (Reg rax) ++ "\n",
                     BStr $ "\tcall *" ++ showRegLoc (Reg rax)++ "\n",
-                    -- BStr $ "\tcall " ++ labelF ++ "\n",
                     moveRegsLocs r12Mem globalSelfRegLoc,
                     codeStackRestore
                 ], Reg rax)
@@ -1359,18 +1417,53 @@ makeLabelTable classIdent = do
         Just (form, parentIdent) -> do
             let (_, methodDepthMap, _) = form
             tableCode <- makeLabelTable' 8 methodDepthMap
-            return $ BLst [BStr $ classLabel classIdent ++ ": .quad " ++ classLabel classIdent, tableCode, BStr "\n"]
+            return $ BLst [BStr $ classLabel classIdent ++ ": .quad " ++ destructorLabel classIdent, tableCode, BStr "\n"]
+        Nothing -> throwError $ "class " ++ showIdent classIdent ++ " not found"
+
+compileClassDestructor' :: [(Type, AttrLoc)] -> CompilerMonad [StringBuilder]
+compileClassDestructor' [] = return []
+compileClassDestructor' ((tp, attrLoc):tail) = do
+    case attrLoc of
+        AttrLocVar depth -> do
+            deleteCode <- deleteReference tp (Mem depth globalSelfRegLoc (Lit 0) 0)
+            codeTail <- compileClassDestructor' tail
+            return $ deleteCode:codeTail
+        _ -> compileClassDestructor' tail
+
+compileClassDestructor :: Ident -> CompilerMonad StringBuilder
+compileClassDestructor classIdent = do
+    (envVar, envClass) <- ask
+    case Data.Map.lookup classIdent envClass of
+        Just (form, parentIdent) -> do
+            let (attrs, _, _) = form
+            (lt0, vrc0, rlu0, nextLabel0, stackStateOld0, strCodes0) <- get
+            destroyElemsCodeArr <- compileClassDestructor' $ Data.Map.elems attrs
+            (lt, vrc, rlu, nextLabel, (oldStack, oldStackMax), strCodes) <- get
+            let stackMax = 16 * div (oldStackMax + 31) 16
+            put (lt, vrc0, rlu0, nextLabel, stackStateOld0, strCodes)
+            return $ BLst [
+                    labelLine $ destructorLabel classIdent,
+                    BStr   "\tpush %rbp\n",
+                    BStr   "\tmovq %rsp, %rbp\n",
+                    BStr $ "\tsub $" ++ show stackMax ++ ", %rsp\n",
+                    BLst destroyElemsCodeArr,
+                    BStr   "\tmovq %rbp, %rsp\n",
+                    BStr   "\tpop %rbp\n",
+                    BStr   "\tret\n"
+                ]
         Nothing -> throwError $ "class " ++ showIdent classIdent ++ " not found"
 
 compileClassElems :: Ident -> [ClassElem] -> CompilerMonad StringBuilder
 compileClassElems classIdent elems = do
     attrMap <- getAttrMap classIdent
+    destructorCode <- compileClassDestructor classIdent
     funcCodes <- addClassElems classIdent (Data.Map.assocs attrMap) elems
     labelTable <- makeLabelTable classIdent
     (lt, vrc, rlu, nextLabel, stackState, (dataCodes, strCount)) <- get 
     let newDataCodes = BLst [dataCodes, labelTable]
     put (lt, vrc, rlu, nextLabel, stackState, (newDataCodes, strCount))
     return $ BLst [
+            destructorCode,
             funcCodes
         ]
 
